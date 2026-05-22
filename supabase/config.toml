@@ -1,0 +1,29 @@
+# RoadPing — Supabase project config (function auth settings).
+#
+# Each function verifies the JWT in code (requireUser) and handles CORS
+# preflight, so verify_jwt is disabled at the gateway. This lets OPTIONS
+# requests through and keeps a single, consistent auth/error path.
+
+[functions.start_live_session]
+verify_jwt = false
+
+[functions.stop_live_session]
+verify_jwt = false
+
+[functions.update_live_location]
+verify_jwt = false
+
+[functions.get_nearby_drivers]
+verify_jwt = false
+
+[functions.create_private_zone]
+verify_jwt = false
+
+[functions.check_private_zone_block]
+verify_jwt = false
+
+[functions.report_user]
+verify_jwt = false
+
+[functions.block_user]
+verify_jwt = false
