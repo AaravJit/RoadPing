@@ -48,6 +48,19 @@ export async function startSession(params: StartSessionParams): Promise<StartSes
  * Stop the current live session.
  * The presence row is immediately deleted — the user disappears from the map.
  * Safe to call even if no session is active (no-op on the server side).
+ *
+ * IMPORTANT: going live and stopping involve TWO things that must be paired:
+ *   1. the server session  (startSession / stopSession)
+ *   2. the local heartbeat  (HeartbeatManager.start / .stop)
+ *
+ * When the user taps Stop, call BOTH — and stop the heartbeat first so no tick
+ * fires against an already-ended session:
+ *
+ *   heartbeat.stop();        // stop local timer
+ *   await stopSession();     // end server session + delete presence
+ *
+ * (If you forget heartbeat.stop(), the next tick self-cancels on
+ * NO_ACTIVE_SESSION — harmless, but don't rely on it.)
  */
 export async function stopSession(): Promise<{ live: false }> {
   return callEdgeFn<{ live: false }>('stop_live_session');

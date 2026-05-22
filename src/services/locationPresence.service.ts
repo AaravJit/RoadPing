@@ -60,9 +60,10 @@ export interface HeartbeatManagerOptions {
    */
   onForceEnd?: (reason: ForceEndReason) => void;
   /**
-   * Called on transient network / parse errors.
-   * The manager continues running — a single missed heartbeat is fine
-   * since the server TTL is 20 s and the default interval is 15 s.
+   * Called on transient failures: a network/parse error from the heartbeat
+   * request, OR a failure to read the current GPS position (`getParams` threw).
+   * The manager keeps running, but two consecutive misses can let the 20 s
+   * server TTL expire — surface this so the UI can warn / re-acquire location.
    */
   onError?: (error: ServiceError) => void;
   /** Interval in milliseconds. Default: 15 000 (15 s). Min: 5 000. */
@@ -109,8 +110,13 @@ export class HeartbeatManager {
       let params: HeartbeatParams;
       try {
         params = await getParams();
-      } catch {
-        // Location unavailable — skip this tick; don't break the loop.
+      } catch (err) {
+        // Location unavailable this tick. Don't break the loop, but surface it:
+        // repeated misses can let the server TTL expire while the UI thinks
+        // it's still live.
+        this.opts.onError?.(
+          new ServiceError('UNKNOWN', `Could not read location: ${(err as Error).message}`),
+        );
         return;
       }
 
@@ -145,8 +151,20 @@ export class HeartbeatManager {
   }
 
   /**
-   * Stop the heartbeat loop (does NOT call stop_live_session).
-   * Call `liveSession.stopSession()` separately to end the session on the server.
+   * Stop the local heartbeat loop. This ONLY cancels the timer — it does NOT
+   * end the server session or delete presence.
+   *
+   * The live state has two halves that must be torn down together:
+   *   1. the local heartbeat  → HeartbeatManager.stop()  (this method)
+   *   2. the server session   → liveSession.stopSession()
+   *
+   * When the user taps Stop, do both, heartbeat first:
+   *   heartbeat.stop();
+   *   await stopSession();
+   *
+   * Stopping only the heartbeat (without stopSession) leaves the session alive
+   * until the 20 s TTL sweeps it — the user would stay visible on the map for
+   * up to ~20 s. Always pair the two.
    */
   stop(): void {
     if (this.timerId !== null) {

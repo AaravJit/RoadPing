@@ -80,10 +80,13 @@ export async function checkHandleAvailable(handle: string): Promise<boolean> {
     );
   }
 
+  // Exact match, not ilike: handles legally contain '_', which ILIKE treats as
+  // a single-char wildcard. The CHECK constraint guarantees handles are already
+  // lowercase, so an exact eq is both correct and case-correct.
   const { data, error } = await supabase
     .from('profiles')
     .select('id')
-    .ilike('handle', normalized)
+    .eq('handle', normalized)
     .maybeSingle();
 
   if (error) throw new ServiceError('DB_ERROR', error.message);

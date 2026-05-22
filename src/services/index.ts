@@ -90,6 +90,7 @@ export {
 export * as privateZone from './privateZone.service';
 export {
   listZones,
+  getZone,
   createZone,
   deleteZone,
   checkBlock,
@@ -123,6 +124,8 @@ export type {
   DriversUpdateCallback,
   DriversErrorCallback,
   SubscribeOptions,
+  Position,
+  PositionGetter,
 } from './nearbyDrivers.service';
 
 // ── Rooms ─────────────────────────────────────────────────────────────────────
@@ -152,11 +155,7 @@ export {
   hasBlocked,
 } from './moderation.service';
 
-// ── Mock data (for unconnected screens) ──────────────────────────────────────
-export {
-  MOCK_DRIVERS,
-  MOCK_PROFILE,
-  MOCK_VEHICLES,
-  MOCK_ZONES,
-  MOCK_ROOMS,
-} from './mock';
+// ── Mock data ─────────────────────────────────────────────────────────────────
+// Deliberately NOT re-exported here. Unconnected screens must import mocks
+// explicitly from '@/services/mock' so real and mock data never blend on the
+// main service surface (and mocks can't be shipped by accident).

@@ -60,7 +60,9 @@ export async function listZones(): Promise<PrivateZone[]> {
  * Create a new private zone.
  * The Edge Function validates coordinates and clamps radius_m (50–5000, default 300).
  *
- * Returns the new zone (without `center` as geography; lat/lng extracted).
+ * The Edge Function returns only a partial row ({ id, name, radius_m, kind,
+ * created_at }), so we refetch the full row by id to return a complete,
+ * accurate PrivateZone — no fabricated fields.
  */
 export async function createZone(input: ZoneCreate): Promise<PrivateZone> {
   if (!input.name?.trim()) throw new ServiceError('INVALID_INPUT', 'Zone name is required.');
@@ -71,7 +73,7 @@ export async function createZone(input: ZoneCreate): Promise<PrivateZone> {
     throw new ServiceError('INVALID_INPUT', 'lng must be between -180 and 180.');
   }
 
-  const result = await callEdgeFn<{ zone: Record<string, unknown> }>('create_private_zone', {
+  const { zone } = await callEdgeFn<{ zone: { id: string } }>('create_private_zone', {
     name:     input.name.trim(),
     lat:      input.lat,
     lng:      input.lng,
@@ -79,15 +81,22 @@ export async function createZone(input: ZoneCreate): Promise<PrivateZone> {
     kind:     input.kind,
   });
 
-  // The Edge Function returns { id, name, radius_m, kind, created_at }.
-  // Re-attach the lat/lng the client already knows (server doesn't return center).
-  return {
-    ...(result.zone as Omit<PrivateZone, 'lat' | 'lng' | 'user_id' | 'updated_at'>),
-    lat: input.lat,
-    lng: input.lng,
-    user_id:    '',       // populated by RLS; refetch if needed
-    updated_at: (result.zone.created_at as string) ?? new Date().toISOString(),
-  };
+  return getZone(zone.id);
+}
+
+/**
+ * Fetch a single private zone by id (owner-only via RLS).
+ * Throws `NOT_FOUND` if it doesn't exist or isn't the caller's.
+ */
+export async function getZone(id: string): Promise<PrivateZone> {
+  const { data, error } = await supabase
+    .from('private_zones')
+    .select('id, user_id, name, center, radius_m, kind, created_at, updated_at')
+    .eq('id', id)
+    .single();
+
+  if (error || !data) throw new ServiceError('NOT_FOUND', 'Zone not found.');
+  return mapRow(data);
 }
 
 /**

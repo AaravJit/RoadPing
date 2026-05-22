@@ -41,6 +41,19 @@ export async function fetchNearbyDrivers(lat: number, lng: number): Promise<Near
 export type DriversUpdateCallback = (drivers: NearbyDriver[]) => void;
 export type DriversErrorCallback  = (error: ServiceError) => void;
 
+/** Current position of the viewer. */
+export interface Position {
+  lat: number;
+  lng: number;
+}
+
+/**
+ * Returns the viewer's current position.
+ * Called on EVERY poll so the nearby query follows the driver as they move.
+ * May be async (e.g. an `expo-location` read).
+ */
+export type PositionGetter = () => Position | Promise<Position>;
+
 export interface SubscribeOptions {
   /** Poll interval in milliseconds. Default: 5 000 (5 s). Min: 2 000. */
   intervalMs?: number;
@@ -52,35 +65,50 @@ export interface SubscribeOptions {
  * Subscribe to nearby drivers with polling.
  * Returns an unsubscribe function — call it in a cleanup effect.
  *
+ * `getPosition` is invoked on every tick, so as the user drives the query
+ * re-centres on their current location (do NOT pass a frozen lat/lng).
+ *
  * @example
  *   const unsubscribe = subscribeNearbyDrivers(
- *     37.7749, -122.4194,
+ *     () => getCurrentPositionAsync(),   // returns { lat, lng }
  *     (drivers) => setDrivers(drivers),
  *   );
  *   return unsubscribe; // in useEffect cleanup
  */
 export function subscribeNearbyDrivers(
-  lat: number,
-  lng: number,
+  getPosition: PositionGetter,
   onUpdate: DriversUpdateCallback,
   options: SubscribeOptions = {},
 ): () => void {
   const intervalMs = Math.max(options.intervalMs ?? 5_000, 2_000);
   let cancelled = false;
 
+  const reportError = (err: unknown) => {
+    if (cancelled || !options.onError) return;
+    options.onError(
+      err instanceof ServiceError
+        ? err
+        : new ServiceError('UNKNOWN', (err as Error).message),
+    );
+  };
+
   const tick = async () => {
     if (cancelled) return;
+
+    let pos: Position;
     try {
-      const drivers = await fetchNearbyDrivers(lat, lng);
+      pos = await getPosition();
+    } catch (err) {
+      // Location unavailable this tick — surface it, then keep polling.
+      reportError(err);
+      return;
+    }
+
+    try {
+      const drivers = await fetchNearbyDrivers(pos.lat, pos.lng);
       if (!cancelled) onUpdate(drivers);
     } catch (err) {
-      if (!cancelled && options.onError) {
-        options.onError(
-          err instanceof ServiceError
-            ? err
-            : new ServiceError('UNKNOWN', (err as Error).message),
-        );
-      }
+      reportError(err);
     }
   };
 
