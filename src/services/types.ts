@@ -160,9 +160,10 @@ export type HeartbeatResult =
 export interface NearbyVehicle {
   make?: string;
   model?: string;
-  year?: number;
-  color?: string;
-  nickname?: string;
+  // Nullable in the DB → null in the get_nearby_drivers jsonb payload.
+  year?: number | null;
+  color?: string | null;
+  nickname?: string | null;
   body_type?: VehicleBodyType;
 }
 

@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "RoadPing",
+    "slug": "roadping",
+    "scheme": "roadping",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#000000",
+    "ios": {
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "RoadPing uses your location only while you are live, to show you on the nearby map and find drivers around you. Your location is never stored as history."
+      }
+    },
+    "android": {
+      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "RoadPing uses your location only while you are live, to show you on the nearby map and find drivers around you."
+        }
+      ]
+    ]
+  }
+}
