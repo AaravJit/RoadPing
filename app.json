@@ -1,0 +1,74 @@
+{
+  "expo": {
+    "name": "RoadPing",
+    "slug": "roadping",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
+    "userInterfaceStyle": "dark",
+    "scheme": "roadping",
+    "platforms": [
+      "ios"
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.aarav.jit.roadping",
+      "buildNumber": "1",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSLocationWhenInUseUsageDescription": "RoadPing uses your location while active to show nearby live drivers and let you appear on the live map after you tap Start RoadPing. Your exact coordinates are never shared and no location history is stored.",
+        "NSMicrophoneUsageDescription": "RoadPing uses your microphone when you hold to talk to nearby drivers or room members. Voice is live only and not recorded or stored.",
+        "NSCameraUsageDescription": "RoadPing does not use the camera for core features. This permission may be requested by the voice SDK for device compatibility, but RoadPing does not record video or use camera footage."
+      }
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "RoadPing uses your location while active to show nearby live drivers and let you appear on the live map after you tap Start RoadPing.",
+          "isIosBackgroundLocationEnabled": false
+        }
+      ],
+      "expo-font",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "RoadPing uses your microphone when you hold to talk to nearby drivers or room members. Voice is live only and not recorded or stored."
+        }
+      ],
+      "expo-asset"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "6b9229fd-a03e-4234-8e05-8941b5ca7ad0"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/6b9229fd-a03e-4234-8e05-8941b5ca7ad0"
+    },
+    "android": {
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
+    }
+  }
+}
