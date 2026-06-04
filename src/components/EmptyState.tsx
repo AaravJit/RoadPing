@@ -6,7 +6,7 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Colors } from '@/theme/colors';
 import { FontSize, FontWeight } from '@/theme/typography';
-import { Spacing } from '@/theme/spacing';
+import { Radius, Spacing } from '@/theme/spacing';
 import { AppButton } from './AppButton';
 
 interface EmptyStateProps {
@@ -28,7 +28,11 @@ export function EmptyState({
 }: EmptyStateProps) {
   return (
     <View style={[styles.container, fill && styles.fill]}>
-      {icon != null && <Text style={styles.icon}>{icon}</Text>}
+      {icon != null && (
+        <View style={styles.iconBadge}>
+          <Text style={styles.icon}>{icon}</Text>
+        </View>
+      )}
       <Text style={styles.title}>{title}</Text>
       {message != null && (
         <Text style={styles.message}>{message}</Text>
@@ -57,9 +61,19 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
-  icon: {
-    fontSize: 40,
+  iconBadge: {
+    width: 76,
+    height: 76,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: Spacing.sm,
+  },
+  icon: {
+    fontSize: 38,
   },
   title: {
     fontSize: FontSize.subheading,

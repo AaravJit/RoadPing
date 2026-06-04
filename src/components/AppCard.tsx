@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '@/theme/colors';
+import { useTheme } from '@/theme/ThemeProvider';
 import { Radius, Spacing, MIN_TOUCH_TARGET } from '@/theme/spacing';
 
 export type CardElevation = 'flat' | 'raised' | 'floating';
@@ -29,8 +30,8 @@ interface AppCardProps {
   accessibilityLabel?: string;
 }
 
-const HIGHLIGHT_COLOR: Record<NonNullable<AppCardProps['highlight']>, string> = {
-  primary: Colors.primary,
+/** Static status highlights — these never change with the theme. */
+const STATUS_HIGHLIGHT: Record<'live' | 'success' | 'warning' | 'error', string> = {
   live: Colors.live,
   success: Colors.success,
   warning: Colors.warning,
@@ -46,12 +47,22 @@ export function AppCard({
   padded = true,
   accessibilityLabel,
 }: AppCardProps) {
+  const { accent } = useTheme();
+
+  // Only the `primary` highlight is themed; status colors stay fixed.
+  const highlightColor =
+    highlight === 'primary'
+      ? accent.accent
+      : highlight != null
+        ? STATUS_HIGHLIGHT[highlight]
+        : null;
+
   const cardStyle: ViewStyle[] = [
     styles.base,
     styles[`elevation_${elevation}`],
     ...(padded ? [styles.padded] : []),
-    ...(highlight != null
-      ? [{ borderWidth: 1 as const, borderColor: HIGHLIGHT_COLOR[highlight] }]
+    ...(highlightColor != null
+      ? [{ borderWidth: 1 as const, borderColor: highlightColor }]
       : []),
     ...(style != null ? [style] : []),
   ];

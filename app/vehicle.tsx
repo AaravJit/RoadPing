@@ -10,7 +10,7 @@
  * before they can reach the Drive screen. Once they have at least one
  * vehicle, tapping "Done" pops back to the route gate which forwards them on.
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -26,6 +26,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AppButton } from '@/components/AppButton';
 import { AppInput } from '@/components/AppInput';
+import { SelectField, type SelectOption } from '@/components/SelectField';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
 import { VehicleCard } from '@/components/VehicleCard';
@@ -41,21 +42,91 @@ import {
   createVehicle,
   deleteVehicle,
   friendlyVehicleError,
+  generateVehicleLabel,
   hasValidationErrors,
   setPrimaryVehicle,
   updateVehicle,
   validateVehicleInput,
   YEAR_MAX,
-  YEAR_MIN,
   type BodyTypeUi,
   type VehicleInput,
   type VehicleInputErrors,
 } from '@/services/vehicle';
+import {
+  inferBodyType,
+  makeHasModels,
+  modelsForMake,
+  OTHER_MAKE,
+  VEHICLE_MAKES,
+} from '@/services/vehicleData';
+
+// ─── Dropdown option sets ──────────────────────────────────────────────────────
+
+const YEAR_OPTIONS: SelectOption[] = Array.from(
+  { length: YEAR_MAX - 1980 + 1 },
+  (_, i) => {
+    const y = YEAR_MAX - i;
+    return { label: String(y), value: String(y) };
+  },
+);
+
+const COLOR_OPTIONS: SelectOption[] = [
+  'Black',
+  'White',
+  'Silver',
+  'Gray',
+  'Red',
+  'Blue',
+  'Green',
+  'Yellow',
+  'Orange',
+  'Brown',
+  'Gold',
+  'Beige',
+  'Purple',
+  'Other',
+].map((c) => ({ label: c, value: c }));
+
+const BASE_MAKE_OPTIONS: SelectOption[] = [...VEHICLE_MAKES, OTHER_MAKE].map(
+  (m) => ({ label: m, value: m }),
+);
+
+/**
+ * Make options including the current value even if it isn't in the curated
+ * list — so editing an existing vehicle with an uncommon make never loses it.
+ */
+function buildMakeOptions(current: string): SelectOption[] {
+  const trimmed = current.trim();
+  if (trimmed.length === 0) return BASE_MAKE_OPTIONS;
+  const known = BASE_MAKE_OPTIONS.some(
+    (o) => o.value.toLowerCase() === trimmed.toLowerCase(),
+  );
+  return known
+    ? BASE_MAKE_OPTIONS
+    : [{ label: trimmed, value: trimmed }, ...BASE_MAKE_OPTIONS];
+}
+
+/** Model options for a make, preserving an existing custom model value. */
+function buildModelOptions(make: string, current: string): SelectOption[] {
+  const base: SelectOption[] = modelsForMake(make).map((m) => ({
+    label: m.name,
+    value: m.name,
+  }));
+  base.push({ label: 'Other / not listed', value: OTHER_MAKE });
+  const trimmed = current.trim();
+  if (
+    trimmed.length > 0 &&
+    trimmed !== OTHER_MAKE &&
+    !base.some((o) => o.value.toLowerCase() === trimmed.toLowerCase())
+  ) {
+    return [{ label: trimmed, value: trimmed }, ...base];
+  }
+  return base;
+}
 
 // ─── Form state helpers ──────────────────────────────────────────────────────
 
 interface FormState {
-  nickname: string;
   bodyType: BodyTypeUi | null;
   make: string;
   model: string;
@@ -64,7 +135,6 @@ interface FormState {
 }
 
 const EMPTY_FORM: FormState = {
-  nickname: '',
   bodyType: null,
   make: '',
   model: '',
@@ -74,7 +144,6 @@ const EMPTY_FORM: FormState = {
 
 function fromVehicle(v: VehicleRow): FormState {
   return {
-    nickname: v.label,
     bodyType: v.body_type !== null ? bodyTypeSqlToUi(v.body_type) : null,
     make: v.make ?? '',
     model: v.model ?? '',
@@ -104,6 +173,19 @@ export default function VehicleScreen() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [actingOnId, setActingOnId] = useState<string | null>(null);
+  // True when the model is entered as free text (make is "Other", has no
+  // curated models, or the user picked "Other / not listed").
+  const [customModel, setCustomModel] = useState(false);
+
+  const makeOptions = useMemo(() => buildMakeOptions(form.make), [form.make]);
+  const modelOptions = useMemo(
+    () => buildModelOptions(form.make, form.model),
+    [form.make, form.model],
+  );
+  const showModelDropdown = !customModel && makeHasModels(form.make);
+  // The body type was filled in for the user from their model selection.
+  const bodyTypeInferred =
+    form.bodyType !== null && inferBodyType(form.make, form.model) === form.bodyType;
 
   // After the initial load, if the user has zero vehicles, jump straight
   // into the form so the empty case acts as "add your first vehicle".
@@ -141,16 +223,66 @@ export default function VehicleScreen() {
       ? (vehicles.find((v) => v.id === mode.editingId) ?? null)
       : null;
 
+  // ── Make / model selection (with body-type inference) ───────────────────
+  function applyMake(make: string) {
+    setSaveError(null);
+    if (make === OTHER_MAKE) {
+      setCustomModel(true);
+      setForm((f) => ({ ...f, make, model: '' }));
+      return;
+    }
+    setCustomModel(false);
+    setForm((f) => {
+      const models = modelsForMake(make);
+      const keep = models.some(
+        (m) => m.name.toLowerCase() === f.model.trim().toLowerCase(),
+      );
+      const nextModel = keep ? f.model : '';
+      const inferred = inferBodyType(make, nextModel);
+      return { ...f, make, model: nextModel, bodyType: inferred ?? f.bodyType };
+    });
+  }
+
+  function applyModelSelect(value: string) {
+    if (value === OTHER_MAKE) {
+      setCustomModel(true);
+      setForm((f) => ({ ...f, model: '' }));
+      return;
+    }
+    setForm((f) => {
+      const inferred = inferBodyType(f.make, value);
+      return { ...f, model: value, bodyType: inferred ?? f.bodyType };
+    });
+  }
+
+  function applyModelText(text: string) {
+    setForm((f) => {
+      const inferred = inferBodyType(f.make, text);
+      return { ...f, model: text, bodyType: inferred ?? f.bodyType };
+    });
+  }
+
   // ── Form open/close ─────────────────────────────────────────────────────
   function openAddForm() {
     setForm(EMPTY_FORM);
+    setCustomModel(false);
     setFieldErrors({});
     setSaveError(null);
     setMode({ kind: 'form', editingId: null });
   }
 
   function openEditForm(v: VehicleRow) {
-    setForm(fromVehicle(v));
+    const fs = fromVehicle(v);
+    // Use the free-text model field when the saved make/model aren't in the
+    // curated dataset, so existing vehicles keep their exact values.
+    const custom =
+      fs.make.trim().length > 0 &&
+      (!makeHasModels(fs.make) ||
+        !modelsForMake(fs.make).some(
+          (m) => m.name.toLowerCase() === fs.model.trim().toLowerCase(),
+        ));
+    setForm(fs);
+    setCustomModel(custom);
     setFieldErrors({});
     setSaveError(null);
     setMode({ kind: 'form', editingId: v.id });
@@ -171,7 +303,7 @@ export default function VehicleScreen() {
     }
 
     const input: VehicleInput = {
-      nickname: form.nickname,
+      // No nickname — the display label is auto-generated from these details.
       bodyType: form.bodyType,
       make: form.make,
       model: form.model,
@@ -185,6 +317,11 @@ export default function VehicleScreen() {
 
     if (user === null) return;
 
+    // First-ever vehicle during initial setup → send them to the theme step
+    // before Drive, so onboarding ends on "pick your cockpit".
+    const creatingFirstVehicle =
+      mode.kind === 'form' && mode.editingId === null && vehicles.length === 0;
+
     setSaving(true);
     try {
       if (mode.kind === 'form' && mode.editingId !== null) {
@@ -193,6 +330,10 @@ export default function VehicleScreen() {
         await createVehicle(user.id, input);
       }
       await refresh();
+      if (creatingFirstVehicle) {
+        router.replace('/theme-setup');
+        return;
+      }
       setMode({ kind: 'list' });
     } catch (err) {
       setSaveError(friendlyVehicleError(err));
@@ -262,6 +403,11 @@ export default function VehicleScreen() {
             showsVerticalScrollIndicator={false}
           >
             <View style={styles.header}>
+              {isInitialSetup && editingVehicle === null && (
+                <View style={styles.stepBadge}>
+                  <Text style={styles.stepBadgeText}>STEP 2 OF 2</Text>
+                </View>
+              )}
               <Text style={styles.title}>
                 {editingVehicle !== null
                   ? 'Edit vehicle'
@@ -275,73 +421,71 @@ export default function VehicleScreen() {
               </Text>
             </View>
 
-            {/* ── Nickname ───────────────────────────────────────────── */}
+            {/* ── Details ────────────────────────────────────────────── */}
             <View style={styles.section}>
-              <Text style={styles.sectionLabel}>Identity</Text>
+              <Text style={styles.sectionLabel}>Details</Text>
 
-              <AppInput
-                label="Nickname"
-                placeholder="e.g. Daily driver"
-                value={form.nickname}
-                onChangeText={(t) => setForm({ ...form, nickname: t })}
-                error={fieldErrors.nickname}
-                helper="A short name only you see."
-                autoCapitalize="sentences"
-                maxLength={50}
-                returnKeyType="next"
-              />
-
-              <AppInput
+              <SelectField
                 label="Make"
-                placeholder="Toyota"
-                value={form.make}
-                onChangeText={(t) => setForm({ ...form, make: t })}
+                value={form.make.length > 0 ? form.make : null}
+                options={makeOptions}
+                placeholder="Select make"
+                searchable
+                onChange={applyMake}
                 error={fieldErrors.make}
-                autoCapitalize="words"
-                maxLength={80}
-                returnKeyType="next"
               />
 
-              <AppInput
-                label="Model"
-                placeholder="Corolla"
-                value={form.model}
-                onChangeText={(t) => setForm({ ...form, model: t })}
-                error={fieldErrors.model}
-                autoCapitalize="words"
-                maxLength={80}
-                returnKeyType="next"
-              />
+              {showModelDropdown ? (
+                <SelectField
+                  label="Model"
+                  value={form.model.length > 0 ? form.model : null}
+                  options={modelOptions}
+                  placeholder="Select model"
+                  searchable
+                  onChange={applyModelSelect}
+                  error={fieldErrors.model}
+                />
+              ) : (
+                <AppInput
+                  label="Model"
+                  placeholder="e.g. Civic"
+                  value={form.model}
+                  onChangeText={applyModelText}
+                  error={fieldErrors.model}
+                  autoCapitalize="words"
+                  maxLength={80}
+                  returnKeyType="next"
+                />
+              )}
 
-              <AppInput
+              <SelectField
                 label="Year"
-                placeholder={String(YEAR_MAX - 1)}
-                value={form.year}
-                onChangeText={(t) =>
-                  setForm({ ...form, year: t.replace(/[^0-9]/g, '').slice(0, 4) })
-                }
+                value={form.year.length > 0 ? form.year : null}
+                options={YEAR_OPTIONS}
+                placeholder="Select year"
+                searchable
+                onChange={(v) => setForm({ ...form, year: v })}
                 error={fieldErrors.year}
-                helper={`Between ${YEAR_MIN} and ${YEAR_MAX}.`}
-                keyboardType="number-pad"
-                maxLength={4}
-                returnKeyType="next"
               />
 
-              <AppInput
+              <SelectField
                 label="Color"
-                placeholder="Silver"
-                value={form.color}
-                onChangeText={(t) => setForm({ ...form, color: t })}
+                value={form.color.length > 0 ? form.color : null}
+                options={COLOR_OPTIONS}
+                placeholder="Select color"
+                onChange={(v) => setForm({ ...form, color: v })}
                 error={fieldErrors.color}
-                autoCapitalize="words"
-                maxLength={40}
-                returnKeyType="done"
               />
             </View>
 
             {/* ── Body type chips ────────────────────────────────────── */}
             <View style={styles.section}>
               <Text style={styles.sectionLabel}>Body type</Text>
+              <Text style={styles.sectionHint}>
+                {bodyTypeInferred
+                  ? 'Picked from your model — tap to change.'
+                  : 'Sets the icon shown on the live map.'}
+              </Text>
               <View style={styles.chipRow} accessibilityRole="radiogroup">
                 {BODY_TYPE_OPTIONS.map((opt) => {
                   const selected = form.bodyType === opt.value;
@@ -373,6 +517,21 @@ export default function VehicleScreen() {
                 <Text style={styles.fieldError}>{fieldErrors.bodyType}</Text>
               )}
             </View>
+
+            {/* ── Auto-generated label preview ───────────────────────── */}
+            {form.make.trim().length > 0 && form.model.trim().length > 0 && (
+              <View style={styles.previewBox}>
+                <Text style={styles.previewLabel}>SHOWN TO NEARBY DRIVERS AS</Text>
+                <Text style={styles.previewValue}>
+                  {generateVehicleLabel({
+                    year: form.year.length > 0 ? Number(form.year) : null,
+                    make: form.make,
+                    model: form.model,
+                    color: form.color,
+                  })}
+                </Text>
+              </View>
+            )}
 
             {/* ── Save error ─────────────────────────────────────────── */}
             {saveError !== null && (
@@ -483,6 +642,22 @@ const styles = StyleSheet.create({
   header: {
     gap: Spacing.sm,
   },
+  stepBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: Colors.primaryMuted,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    borderRadius: Radius.full,
+    paddingHorizontal: Spacing.md12,
+    paddingVertical: Spacing.xs,
+    marginBottom: Spacing.xs,
+  },
+  stepBadgeText: {
+    fontSize: FontSize.micro,
+    fontWeight: FontWeight.bold,
+    color: Colors.primary,
+    letterSpacing: 1,
+  },
   title: {
     ...TextStyles.headingLarge,
     color: Colors.textPrimary,
@@ -501,6 +676,12 @@ const styles = StyleSheet.create({
     color: Colors.textTertiary,
     textTransform: 'uppercase',
     letterSpacing: 1,
+  },
+  sectionHint: {
+    fontSize: FontSize.caption,
+    color: Colors.textTertiary,
+    marginTop: -Spacing.sm,
+    lineHeight: FontSize.caption * 1.4,
   },
 
   // Body-type chip row
@@ -539,6 +720,27 @@ const styles = StyleSheet.create({
   fieldError: {
     fontSize: FontSize.caption,
     color: Colors.error,
+  },
+
+  // Auto-label preview
+  previewBox: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.md,
+    gap: Spacing.xs,
+  },
+  previewLabel: {
+    fontSize: FontSize.micro,
+    fontWeight: FontWeight.semibold,
+    color: Colors.textTertiary,
+    letterSpacing: 1,
+  },
+  previewValue: {
+    fontSize: FontSize.bodyLarge,
+    fontWeight: FontWeight.semibold,
+    color: Colors.textPrimary,
   },
 
   // Banners + actions

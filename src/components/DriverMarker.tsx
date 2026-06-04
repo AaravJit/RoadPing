@@ -2,21 +2,31 @@
  * DriverMarker — custom map marker for a nearby driver.
  *
  * Visual language:
- *   • Pill-shaped circular body with the vehicle emoji.
+ *   • Pill-shaped circular body with the vehicle-category emoji.
+ *   • A clean "gamertag" name pill floats above the body.
  *   • Color halo when the driver's vehicle has a known color string.
  *   • Pulsing red ring while the driver is speaking (and not in DND).
  *   • Lifted/larger amber outline when selected (synced with bottom sheet).
  *
+ * Vehicle category: nearby drivers only carry the COARSE `vehicle_type`
+ * (car/motorcycle/truck/van/bicycle/other) via get_nearby_drivers — the fine
+ * body style (sedan/coupe/suv/…) is NOT returned for other drivers, so the
+ * marker maps the coarse type to the closest icon and falls back to a generic
+ * car. (See VEHICLE_EMOJI + the doc note in NearbyMap / types.ts.)
+ *
  * Privacy: this component receives a `NearbyDriverCard` only — never any
  * lat/lng. It renders inside react-native-maps <Marker> using the synthetic
- * coordinate computed by NearbyMap.
+ * coordinate computed by NearbyMap. The label only ever shows display name /
+ * @handle — never an email or coordinates.
  *
  * Memoized to keep map re-renders cheap when only a sibling marker changed.
  */
 import React, { memo, useEffect, useRef } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 import { Colors } from '@/theme/colors';
-import { FontWeight } from '@/theme/typography';
+import { useTheme } from '@/theme/ThemeProvider';
+import { FontSize, FontWeight } from '@/theme/typography';
+import { Radius, Spacing } from '@/theme/spacing';
 import type { NearbyDriverCard, VehicleType } from '@/services/types';
 
 const VEHICLE_EMOJI: Record<VehicleType, string> = {
@@ -27,6 +37,18 @@ const VEHICLE_EMOJI: Record<VehicleType, string> = {
   bicycle: '🚲',
   other: '🛞',
 };
+
+/**
+ * Safe gamertag text for a nearby driver. Prefers the display name, then the
+ * @handle, then a neutral "Driver" fallback. Never an email or coordinates.
+ */
+function driverLabel(driver: NearbyDriverCard): string {
+  const name = driver.display_name?.trim();
+  if (name) return name;
+  const handle = driver.handle?.trim();
+  if (handle) return `@${handle}`;
+  return 'Driver';
+}
 
 const MARKER_SIZE = 40;
 const SELECTED_SIZE = 52;
@@ -63,13 +85,17 @@ interface DriverMarkerProps {
   driver: NearbyDriverCard;
   isSpeaking: boolean;
   isSelected: boolean;
+  /** Show the gamertag name pill above the blip (hidden when the map is busy). */
+  showLabel?: boolean;
 }
 
 function DriverMarkerInner({
   driver,
   isSpeaking,
   isSelected,
+  showLabel = true,
 }: DriverMarkerProps) {
+  const { accent } = useTheme();
   const pulse = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -109,58 +135,77 @@ function DriverMarkerInner({
   const halo = haloColor(driver.vehicle_color);
   const size = isSelected ? SELECTED_SIZE : MARKER_SIZE;
 
+  const labelBorder = isSelected
+    ? accent.accent
+    : isSpeaking
+      ? Colors.live
+      : 'rgba(255,255,255,0.14)';
+
   return (
-    <View
-      style={[styles.outer, { width: size + 24, height: size + 24 }]}
-      pointerEvents="none"
-    >
-      {/* Speaking pulse — only when actively speaking */}
-      {isSpeaking && (
-        <Animated.View
-          style={[
-            styles.speakingRing,
-            {
-              width: size + 16,
-              height: size + 16,
-              borderRadius: (size + 16) / 2,
-              opacity: ringOpacity,
-              transform: [{ scale: ringScale }],
-            },
-          ]}
-        />
+    <View style={styles.outer} pointerEvents="none">
+      {/* Gamertag name pill — display name / @handle only */}
+      {showLabel && (
+        <View style={[styles.labelPill, { borderColor: labelBorder }]}>
+          <Text style={styles.labelText} numberOfLines={1}>
+            {driverLabel(driver)}
+          </Text>
+        </View>
       )}
 
-      {/* Halo behind body — colored if we know the vehicle color */}
-      {halo !== null && (
+      {/* Centered marker stack — body + halo + speaking pulse share one centre */}
+      <View style={[styles.stack, { width: size, height: size }]}>
+        {/* Speaking pulse — only when actively speaking */}
+        {isSpeaking && (
+          <Animated.View
+            style={[
+              styles.speakingRing,
+              {
+                width: size + 16,
+                height: size + 16,
+                borderRadius: (size + 16) / 2,
+                opacity: ringOpacity,
+                transform: [{ scale: ringScale }],
+              },
+            ]}
+          />
+        )}
+
+        {/* Halo behind body — colored if we know the vehicle color */}
+        {halo !== null && (
+          <View
+            style={[
+              styles.halo,
+              {
+                width: size + 8,
+                height: size + 8,
+                borderRadius: (size + 8) / 2,
+                borderColor: halo,
+              },
+            ]}
+          />
+        )}
+
+        {/* Marker body */}
         <View
           style={[
-            styles.halo,
+            styles.body,
             {
-              width: size + 8,
-              height: size + 8,
-              borderRadius: (size + 8) / 2,
-              borderColor: halo,
+              width: size,
+              height: size,
+              borderRadius: size / 2,
             },
+            isSelected && styles.bodySelected,
+            isSelected && {
+              borderColor: accent.accent,
+              backgroundColor: accent.accentMuted,
+            },
+            isSpeaking && !isSelected && styles.bodySpeaking,
           ]}
-        />
-      )}
-
-      {/* Marker body */}
-      <View
-        style={[
-          styles.body,
-          {
-            width: size,
-            height: size,
-            borderRadius: size / 2,
-          },
-          isSelected && styles.bodySelected,
-          isSpeaking && !isSelected && styles.bodySpeaking,
-        ]}
-      >
-        <Text style={[styles.emoji, isSelected && styles.emojiSelected]}>
-          {emoji}
-        </Text>
+        >
+          <Text style={[styles.emoji, isSelected && styles.emojiSelected]}>
+            {emoji}
+          </Text>
+        </View>
       </View>
 
       {/* Tiny anchor point underneath, so the marker reads as "pinned" */}
@@ -168,6 +213,7 @@ function DriverMarkerInner({
         style={[
           styles.anchor,
           isSelected && styles.anchorSelected,
+          isSelected && { backgroundColor: accent.accent },
           isSpeaking && !isSelected && styles.anchorSpeaking,
         ]}
       />
@@ -180,8 +226,11 @@ export const DriverMarker = memo(DriverMarkerInner, (a, b) => {
     a.driver.user_id === b.driver.user_id &&
     a.driver.vehicle_type === b.driver.vehicle_type &&
     a.driver.vehicle_color === b.driver.vehicle_color &&
+    a.driver.display_name === b.driver.display_name &&
+    a.driver.handle === b.driver.handle &&
     a.isSpeaking === b.isSpeaking &&
-    a.isSelected === b.isSelected
+    a.isSelected === b.isSelected &&
+    a.showLabel === b.showLabel
   );
 });
 
@@ -189,6 +238,30 @@ const styles = StyleSheet.create({
   outer: {
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  stack: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  labelPill: {
+    maxWidth: 140,
+    backgroundColor: 'rgba(10, 10, 20, 0.92)',
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 2,
+    marginBottom: 4,
+    // subtle lift so the pill reads above the map
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.45,
+    shadowRadius: 4,
+  },
+  labelText: {
+    fontSize: FontSize.micro,
+    fontWeight: FontWeight.semibold,
+    color: '#f2f3f7',
+    letterSpacing: 0.2,
   },
   speakingRing: {
     position: 'absolute',

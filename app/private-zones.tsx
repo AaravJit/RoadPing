@@ -34,6 +34,8 @@ import { FontSize, FontWeight } from '@/theme/typography';
 import { Radius, Spacing } from '@/theme/spacing';
 import { useAuth } from '@/hooks/useAuth';
 import { usePrivateZones } from '@/hooks/usePrivateZones';
+import { useUnits } from '@/hooks/useUnits';
+import { closestPresetIndex, zoneRadiusPresetsFor } from '@/services/units';
 import {
   ZONE_KIND_ICON,
   ZONE_KIND_LABEL,
@@ -50,10 +52,6 @@ import type { PrivateZoneRow } from '@/services/types';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function fmtRadius(m: number): string {
-  return m >= 1000 ? `${(m / 1000).toFixed(m % 1000 === 0 ? 0 : 1)} km` : `${m} m`;
-}
-
 const KIND_OPTIONS: ZoneKind[] = ['home', 'work', 'custom'];
 
 // ─── ZoneRow ─────────────────────────────────────────────────────────────────
@@ -65,6 +63,7 @@ interface ZoneRowProps {
 }
 
 function ZoneRow({ zone, onEdit, onDelete }: ZoneRowProps) {
+  const { formatRange } = useUnits();
   return (
     <View style={zoneRowStyles.wrap}>
       <View style={zoneRowStyles.info}>
@@ -74,7 +73,7 @@ function ZoneRow({ zone, onEdit, onDelete }: ZoneRowProps) {
             {zone.name}
           </Text>
           <Text style={zoneRowStyles.meta}>
-            {ZONE_KIND_LABEL[zone.kind]} · {fmtRadius(zone.radius_m)} radius
+            {ZONE_KIND_LABEL[zone.kind]} · {formatRange(zone.radius_m)} radius
           </Text>
         </View>
       </View>
@@ -165,12 +164,15 @@ interface ZoneFormProps {
 }
 
 function ZoneForm({ initial, isMutating, onSave, onCancel }: ZoneFormProps) {
+  const { system } = useUnits();
+  const radiusPresets = zoneRadiusPresetsFor(system);
   const [name, setName] = useState(initial?.name ?? '');
   const [kind, setKind] = useState<ZoneKind>(initial?.kind ?? 'custom');
   const [radius, setRadius] = useState(
     initial?.radius_m ?? ZONE_RADIUS_PRESETS[2].value,
   );
   const [nameError, setNameError] = useState<string | null>(null);
+  const selectedRadiusIndex = closestPresetIndex(radiusPresets, radius);
 
   function validate(): boolean {
     if (name.trim().length === 0) {
@@ -244,28 +246,31 @@ function ZoneForm({ initial, isMutating, onSave, onCancel }: ZoneFormProps) {
           RoadPing hides you within this distance of the zone center.
         </Text>
         <View style={formStyles.chips}>
-          {ZONE_RADIUS_PRESETS.map((p) => (
-            <Pressable
-              key={p.value}
-              onPress={() => setRadius(p.value)}
-              style={[
-                formStyles.chip,
-                radius === p.value && formStyles.chipActive,
-              ]}
-              accessibilityRole="radio"
-              accessibilityState={{ selected: radius === p.value }}
-              accessibilityLabel={`Radius: ${p.label}`}
-            >
-              <Text
+          {radiusPresets.map((p, i) => {
+            const selected = i === selectedRadiusIndex;
+            return (
+              <Pressable
+                key={p.value}
+                onPress={() => setRadius(p.value)}
                 style={[
-                  formStyles.chipLabel,
-                  radius === p.value && formStyles.chipLabelActive,
+                  formStyles.chip,
+                  selected && formStyles.chipActive,
                 ]}
+                accessibilityRole="radio"
+                accessibilityState={{ selected }}
+                accessibilityLabel={`Radius: ${p.label}`}
               >
-                {p.label}
-              </Text>
-            </Pressable>
-          ))}
+                <Text
+                  style={[
+                    formStyles.chipLabel,
+                    selected && formStyles.chipLabelActive,
+                  ]}
+                >
+                  {p.label}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
 
         <View style={formStyles.formActions}>

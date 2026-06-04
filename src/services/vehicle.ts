@@ -39,13 +39,17 @@ export interface BodyTypeOption {
   emoji: string;
 }
 
+// Category icons are deliberately subtle and accurate rather than a rainbow of
+// near-identical glyphs: car-like bodies share 🚗, taller bodies share 🚙,
+// trucks/vans/sport/moto each get their own. Emoji can't distinguish a coupe
+// from a sedan, so we never show a "wrong but confident" icon.
 export const BODY_TYPE_OPTIONS: readonly BodyTypeOption[] = [
   { value: 'sedan', label: 'Sedan', emoji: '🚗' },
-  { value: 'coupe', label: 'Coupe', emoji: '🚙' },
-  { value: 'hatchback', label: 'Hatchback', emoji: '🚘' },
-  { value: 'wagon', label: 'Wagon', emoji: '🚖' },
+  { value: 'coupe', label: 'Coupe', emoji: '🚗' },
+  { value: 'hatchback', label: 'Hatchback', emoji: '🚗' },
+  { value: 'wagon', label: 'Wagon', emoji: '🚙' },
   { value: 'suv', label: 'SUV', emoji: '🚙' },
-  { value: 'crossover', label: 'Crossover', emoji: '🚐' },
+  { value: 'crossover', label: 'Crossover', emoji: '🚙' },
   { value: 'pickup', label: 'Pickup', emoji: '🛻' },
   { value: 'van', label: 'Van', emoji: '🚐' },
   { value: 'sportsCar', label: 'Sports car', emoji: '🏎' },
@@ -80,8 +84,12 @@ export function bodyTypeEmoji(body: BodyTypeUi): string {
 // ─── Input types ──────────────────────────────────────────────────────────────
 
 export interface VehicleInput {
-  /** Nickname — shown as the card title. Maps to DB `label`. 1–50 chars. */
-  nickname: string;
+  /**
+   * Optional. The user is no longer asked to name a vehicle (Phase 16D).
+   * When omitted/blank, a display label is generated from year/make/model/color.
+   * Still maps to DB `label` for backward compatibility.
+   */
+  nickname?: string;
   bodyType: BodyTypeUi;
   make: string;
   model: string;
@@ -92,6 +100,39 @@ export interface VehicleInput {
 
 export const YEAR_MIN = 1900;
 export const YEAR_MAX = new Date().getFullYear() + 1;
+
+/**
+ * Generate a human display label from vehicle details (Phase 16D — replaces the
+ * removed naming step). Prefers `year make model`; falls back to
+ * `Color make model` when the year is missing. Examples:
+ *   "2014 BMW 320i", "2017 Honda CBR500R", "Black Honda Civic".
+ */
+export function generateVehicleLabel(input: {
+  year?: number | null;
+  make: string;
+  model: string;
+  color?: string | null;
+}): string {
+  const make = input.make.trim();
+  const model = input.model.trim();
+  const base = [make, model].filter((s) => s.length > 0).join(' ');
+
+  if (typeof input.year === 'number' && Number.isFinite(input.year) && input.year > 0) {
+    return `${input.year} ${base}`.trim();
+  }
+  const color = (input.color ?? '').trim();
+  if (color.length > 0) {
+    const cap = color.charAt(0).toUpperCase() + color.slice(1);
+    return `${cap} ${base}`.trim();
+  }
+  return base.length > 0 ? base : 'My vehicle';
+}
+
+/** Resolve the label to persist: explicit nickname if given, else generated. */
+function resolveLabel(input: VehicleInput): string {
+  const explicit = input.nickname?.trim();
+  return explicit && explicit.length > 0 ? explicit : generateVehicleLabel(input);
+}
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
@@ -107,9 +148,8 @@ export interface VehicleInputErrors {
 export function validateVehicleInput(input: VehicleInput): VehicleInputErrors {
   const errors: VehicleInputErrors = {};
 
-  const nick = input.nickname.trim();
-  if (nick.length === 0) errors.nickname = 'Nickname is required.';
-  else if (nick.length > 50) errors.nickname = 'Must be 50 characters or fewer.';
+  // Nickname is no longer collected from the user (Phase 16D) — the label is
+  // auto-generated, so it is not validated here.
 
   if (input.bodyType.length === 0) errors.bodyType = 'Pick a body type.';
 
@@ -173,7 +213,7 @@ export async function createVehicle(
     .from('vehicles')
     .insert({
       user_id: userId,
-      label: input.nickname.trim(),
+      label: resolveLabel(input),
       vehicle_type: vehicleTypeFromBody(input.bodyType),
       body_type: bodyTypeUiToSql(input.bodyType),
       make: input.make.trim(),
@@ -204,7 +244,7 @@ export async function updateVehicle(
   const { data, error } = await supabase
     .from('vehicles')
     .update({
-      label: input.nickname.trim(),
+      label: resolveLabel(input),
       vehicle_type: vehicleTypeFromBody(input.bodyType),
       body_type: bodyTypeUiToSql(input.bodyType),
       make: input.make.trim(),

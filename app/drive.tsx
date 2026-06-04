@@ -27,6 +27,7 @@ import {
   Alert,
   Animated,
   Linking,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -45,6 +46,7 @@ import { ErrorState } from '@/components/ErrorState';
 import { HoldToTalkButton } from '@/components/HoldToTalkButton';
 import { LoadingState } from '@/components/LoadingState';
 import { NearbyMap } from '@/components/NearbyMap';
+import { MapCompass } from '@/components/MapCompass';
 import { RangeSelector } from '@/components/RangeSelector';
 import { ReportModal } from '@/components/ReportModal';
 import { StatusPill } from '@/components/StatusPill';
@@ -58,6 +60,8 @@ import { useLiveSession } from '@/hooks/useLiveSession';
 import { useNearbyDrivers } from '@/hooks/useNearbyDrivers';
 import { useHoldToTalk } from '@/hooks/useHoldToTalk';
 import { useAppLifecycleCleanup } from '@/hooks/useAppLifecycleCleanup';
+import { useUnits } from '@/hooks/useUnits';
+import { DEFAULT_RANGE_M } from '@/services/units';
 import { bodyTypeEmoji, bodyTypeSqlToUi } from '@/services/vehicle';
 import { updateProfile } from '@/services/profile';
 import { blockUser } from '@/services/moderation';
@@ -100,18 +104,12 @@ function formatTimer(ms: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-function fmtRange(m: number): string {
-  if (m < 1000) return `${m} m`;
-  return m % 1000 === 0
-    ? `${m / 1000} km`
-    : `${(m / 1000).toFixed(1)} km`;
-}
-
 // ─── DriveScreen ──────────────────────────────────────────────────────────────
 
 export default function DriveScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { formatRange } = useUnits();
 
   // ── Data hooks — ALL called unconditionally before any early return ─────────
   const { user, isLoading: authLoading } = useAuth();
@@ -125,7 +123,7 @@ export default function DriveScreen() {
   } = useVehicles(user?.id ?? null);
 
   const live = useLiveSession({
-    initialRangeM: profile?.default_range_m ?? 2000,
+    initialRangeM: profile?.default_range_m ?? DEFAULT_RANGE_M,
   });
 
   // Sync rangeM once with the profile default (fires only once after load).
@@ -150,9 +148,14 @@ export default function DriveScreen() {
     cleanup: () => live.stopSilent(),
   });
 
-  // ── Bottom sheet animation ─────────────────────────────────────────────────
+  // ── Bottom sheet animation + drag ──────────────────────────────────────────
   const sheetAnim = useRef(new Animated.Value(SHEET_COLLAPSED)).current;
   const [sheetExpanded, setSheetExpanded] = useState(false);
+  // Mirror of sheetExpanded readable inside the (stable) PanResponder closure.
+  const sheetExpandedRef = useRef(false);
+  sheetExpandedRef.current = sheetExpanded;
+  // Sheet height captured at the moment a drag starts.
+  const dragBaseRef = useRef(SHEET_COLLAPSED);
 
   function animateSheet(toValue: number) {
     Animated.spring(sheetAnim, {
@@ -176,6 +179,43 @@ export default function DriveScreen() {
     }
   }
 
+  /**
+   * Drag-to-resize for the live bottom sheet, built on RN's core PanResponder
+   * (no extra gesture library). Attached to the sheet header only, so the
+   * driver list still scrolls and the Stop/Hide buttons still tap:
+   *   • Claims the gesture only on a clear vertical move (>6px, mostly vertical)
+   *     — taps fall through to the handle / buttons.
+   *   • Drag up grows the sheet toward SHEET_EXPANDED; drag down shrinks it.
+   *   • On release, a flick (velocity) or crossing the midpoint snaps open/closed.
+   */
+  const sheetPan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_evt, g) =>
+        Math.abs(g.dy) > 6 && Math.abs(g.dy) > Math.abs(g.dx),
+      onPanResponderGrant: () => {
+        dragBaseRef.current = sheetExpandedRef.current
+          ? SHEET_EXPANDED
+          : SHEET_COLLAPSED;
+      },
+      onPanResponderMove: (_evt, g) => {
+        let next = dragBaseRef.current - g.dy; // up (negative dy) → taller
+        if (next < SHEET_COLLAPSED) next = SHEET_COLLAPSED;
+        if (next > SHEET_EXPANDED) next = SHEET_EXPANDED;
+        sheetAnim.setValue(next);
+      },
+      onPanResponderRelease: (_evt, g) => {
+        const projected = dragBaseRef.current - g.dy;
+        const midpoint = (SHEET_COLLAPSED + SHEET_EXPANDED) / 2;
+        const expand =
+          g.vy < -0.4 ? true : g.vy > 0.4 ? false : projected > midpoint;
+        setSheetExpanded(expand);
+        animateSheet(expand ? SHEET_EXPANDED : SHEET_COLLAPSED);
+      },
+      onPanResponderTerminationRequest: () => false,
+    }),
+  ).current;
+
   // Reset sheet when going offline.
   useEffect(() => {
     if (!isLive) {
@@ -196,6 +236,9 @@ export default function DriveScreen() {
     null,
   );
   const [dndUpdating, setDndUpdating] = useState(false);
+  // Start screen stays clean: the range chips are hidden until the driver taps
+  // "Change" on the compact "Live range" row.
+  const [rangeEditorOpen, setRangeEditorOpen] = useState(false);
 
   // ── Map permanent-display state ────────────────────────────────────────────
   /** Best-effort quiet coords used to pre-center the map BEFORE going live.
@@ -206,6 +249,8 @@ export default function DriveScreen() {
     'undetermined',
   );
   const [recenterTick, setRecenterTick] = useState(0);
+  // Live camera heading (degrees, 0 = north-up) surfaced by the map for the compass.
+  const [mapHeading, setMapHeading] = useState(0);
 
   // On mount: poll permission state and grab one quiet fix if available.
   useEffect(() => {
@@ -373,7 +418,7 @@ export default function DriveScreen() {
   const heartbeatSec = Math.floor(live.msSinceHeartbeat / 1000);
   const heartbeatVariant: 'online' | 'away' =
     heartbeatSec > 20 ? 'away' : 'online';
-  const rangeLabel = fmtRange(live.rangeM);
+  const rangeLabel = formatRange(live.rangeM);
   const speakingDriver =
     nearby.drivers.find((d) => d.is_speaking && !d.dnd) ?? null;
   const primaryBodyUi =
@@ -396,8 +441,12 @@ export default function DriveScreen() {
         selectedDriverId={selectedDriver?.user_id ?? null}
         isLive={isLive}
         userCoords={mapCoords}
+        userVehicleEmoji={
+          primaryBodyUi !== null ? bodyTypeEmoji(primaryBodyUi) : null
+        }
         onMarkerPress={selectDriver}
         recenterTick={recenterTick}
+        onHeadingChange={setMapHeading}
       />
 
       {/* ── 2. Floating header (position: absolute, top) ──────────────── */}
@@ -459,7 +508,20 @@ export default function DriveScreen() {
         </View>
       )}
 
-      {/* ── 2b. Floating recenter button ─────────────────────────────── */}
+      {/* ── 2b. Compass (top-left) ───────────────────────────────────── */}
+      {mapCoords !== null && (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.compassWrap,
+            { top: insets.top + Spacing.huge + Spacing.lg, left: Spacing.md },
+          ]}
+        >
+          <MapCompass heading={mapHeading} />
+        </View>
+      )}
+
+      {/* ── 2c. Floating recenter button ─────────────────────────────── */}
       {mapCoords !== null && (
         <Pressable
           onPress={handleRecenter}
@@ -501,9 +563,9 @@ export default function DriveScreen() {
       {/* ── 4a. Live bottom sheet ─────────────────────────────────────── */}
       {isLive && (
         <Animated.View style={[styles.sheet, { height: sheetAnim }]}>
-          {/* Sheet header — always visible even when collapsed */}
-          <View style={styles.sheetHeader}>
-            {/* Drag handle — tap to expand / collapse */}
+          {/* Sheet header — always visible; drag anywhere here to resize */}
+          <View style={styles.sheetHeader} {...sheetPan.panHandlers}>
+            {/* Drag handle — tap to expand / collapse, or swipe up/down */}
             <Pressable
               onPress={toggleSheet}
               style={styles.handleArea}
@@ -589,7 +651,7 @@ export default function DriveScreen() {
                   fill={false}
                   icon="🛣"
                   title="No drivers nearby yet"
-                  message={`You're live within ${fmtRange(live.rangeM)}. Updates every few seconds.`}
+                  message={`You're live within ${formatRange(live.rangeM)}. Updates every few seconds.`}
                 />
               )}
 
@@ -663,12 +725,40 @@ export default function DriveScreen() {
               </Pressable>
             )}
 
-            {/* Range selector */}
-            <RangeSelector
-              label="Broadcast range"
-              value={live.rangeM}
-              onChange={live.setRangeM}
-            />
+            {/* Compact live-range control — keeps the Start view clean.
+                Shows a subtle "Live range · 3 mi" line; tap "Change" to reveal
+                the preset chips. Full control also lives in Settings. */}
+            <View style={styles.rangeCompact}>
+              <Pressable
+                style={styles.rangeCompactRow}
+                onPress={() => setRangeEditorOpen((o) => !o)}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  rangeEditorOpen
+                    ? 'Hide range options'
+                    : `Live range ${formatRange(live.rangeM)}. Tap to change.`
+                }
+              >
+                <View style={styles.rangeCompactText}>
+                  <Text style={styles.rangeCompactLabel}>Live range</Text>
+                  <Text style={styles.rangeCompactValue}>
+                    {formatRange(live.rangeM)}
+                  </Text>
+                </View>
+                <Text style={styles.rangeCompactAction}>
+                  {rangeEditorOpen ? 'Done' : 'Change'}
+                </Text>
+              </Pressable>
+
+              {rangeEditorOpen && (
+                <View style={styles.rangeCompactEditor}>
+                  <RangeSelector
+                    value={live.rangeM}
+                    onChange={live.setRangeM}
+                  />
+                </View>
+              )}
+            </View>
 
             {/* Do Not Disturb toggle */}
             {profile !== null && (
@@ -983,6 +1073,11 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
 
+  // ── Compass (top-left overlay) ───────────────────────────────────────────────
+  compassWrap: {
+    position: 'absolute',
+  },
+
   // ── Recenter button ──────────────────────────────────────────────────────────
   recenterBtn: {
     position: 'absolute',
@@ -1079,6 +1174,50 @@ const styles = StyleSheet.create({
     fontSize: FontSize.heading,
     color: Colors.textTertiary,
     paddingRight: Spacing.xs,
+  },
+
+  // Compact live-range control
+  rangeCompact: {
+    backgroundColor: Colors.surfaceElevated,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: 'hidden',
+  },
+  rangeCompactRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    padding: Spacing.md,
+    minHeight: 56,
+  },
+  rangeCompactText: {
+    flex: 1,
+    gap: 2,
+  },
+  rangeCompactLabel: {
+    fontSize: FontSize.caption,
+    color: Colors.textTertiary,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    fontWeight: FontWeight.semibold,
+  },
+  rangeCompactValue: {
+    fontSize: FontSize.body,
+    fontWeight: FontWeight.semibold,
+    color: Colors.textPrimary,
+  },
+  rangeCompactAction: {
+    fontSize: FontSize.bodySmall,
+    fontWeight: FontWeight.semibold,
+    color: Colors.primary,
+  },
+  rangeCompactEditor: {
+    paddingHorizontal: Spacing.md,
+    paddingBottom: Spacing.md,
+    paddingTop: Spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
   },
 
   // DND toggle row

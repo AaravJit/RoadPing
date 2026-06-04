@@ -8,6 +8,9 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Colors } from '@/theme/colors';
+import { useTheme } from '@/theme/ThemeProvider';
+import { useUnits } from '@/hooks/useUnits';
+import { closestPresetIndex, rangePresetsFor } from '@/services/units';
 import { FontSize, FontWeight } from '@/theme/typography';
 import { MIN_TOUCH_TARGET, Radius, Spacing } from '@/theme/spacing';
 
@@ -15,14 +18,6 @@ export interface RangeOption {
   label: string;
   value: number;
 }
-
-export const RANGE_PRESETS: readonly RangeOption[] = [
-  { label: '500 m', value: 500 },
-  { label: '1 km', value: 1000 },
-  { label: '2 km', value: 2000 },
-  { label: '3 km', value: 3000 },
-  { label: '5 km', value: 5000 },
-] as const;
 
 interface RangeSelectorProps {
   value: number;
@@ -38,12 +33,18 @@ export function RangeSelector({
   label,
   disabled = false,
 }: RangeSelectorProps) {
+  const { accent } = useTheme();
+  const { system } = useUnits();
+  const presets = rangePresetsFor(system);
+  // Highlight the closest preset so an existing metres value still lights up
+  // after a unit switch (values are stored in metres, labels follow units).
+  const selectedIndex = closestPresetIndex(presets, value);
   return (
     <View style={styles.wrap}>
       {label !== undefined && <Text style={styles.label}>{label}</Text>}
       <View style={styles.row} accessibilityRole="radiogroup">
-        {RANGE_PRESETS.map((opt) => {
-          const selected = opt.value === value;
+        {presets.map((opt, i) => {
+          const selected = i === selectedIndex;
           return (
             <Pressable
               key={opt.value}
@@ -57,6 +58,10 @@ export function RangeSelector({
               style={[
                 styles.chip,
                 selected && styles.chipActive,
+                selected && {
+                  backgroundColor: accent.accentMuted,
+                  borderColor: accent.accent,
+                },
                 disabled && styles.chipDisabled,
               ]}
             >
@@ -64,6 +69,7 @@ export function RangeSelector({
                 style={[
                   styles.chipLabel,
                   selected && styles.chipLabelActive,
+                  selected && { color: accent.accent },
                 ]}
               >
                 {opt.label}

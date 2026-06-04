@@ -24,10 +24,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AppInput } from '@/components/AppInput';
 import { AppButton } from '@/components/AppButton';
+import { RoadPingLogo } from '@/components/RoadPingLogo';
 import { Colors } from '@/theme/colors';
 import { FontSize, FontWeight, TextStyles } from '@/theme/typography';
 import { Radius, Spacing } from '@/theme/spacing';
-import { signInWithPassword, signUp, friendlyAuthError } from '@/services/auth';
+import {
+  signInWithPassword,
+  signUp,
+  resendVerificationEmail,
+  friendlyAuthError,
+} from '@/services/auth';
 
 type Mode = 'signin' | 'signup';
 
@@ -51,6 +57,8 @@ export default function AuthScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [emailConfirmSent, setEmailConfirmSent] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [resendNote, setResendNote] = useState<string | null>(null);
 
   // ── Mode toggle ──────────────────────────────────────────────────────────
   function switchMode(next: Mode) {
@@ -100,35 +108,67 @@ export default function AuthScreen() {
     }
   }
 
+  // ── Resend confirmation email ──────────────────────────────────────────────
+  async function handleResend() {
+    setResendNote(null);
+    setResending(true);
+    try {
+      await resendVerificationEmail(email);
+      setResendNote('Sent — check your inbox again.');
+    } catch (err) {
+      setResendNote(friendlyAuthError(err));
+    } finally {
+      setResending(false);
+    }
+  }
+
   // ── Email confirmation sent ───────────────────────────────────────────────
   if (emailConfirmSent) {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <View style={styles.confirmContainer}>
-          <Text style={styles.confirmIcon}>📧</Text>
+          <RoadPingLogo size={88} />
 
-          <Text style={styles.confirmTitle}>Check your email</Text>
+          <View style={styles.confirmHeader}>
+            <Text style={styles.confirmTitle}>Check your email</Text>
+            <Text style={styles.confirmBody}>
+              We sent a verification link to{'\n'}
+              <Text style={styles.confirmEmail}>{email}</Text>
+            </Text>
+            <Text style={styles.confirmHint}>
+              Open it on this device and you&apos;ll come straight back into
+              RoadPing — already signed in.
+            </Text>
+          </View>
 
-          <Text style={styles.confirmBody}>
-            We sent a confirmation link to{'\n'}
-            <Text style={styles.confirmEmail}>{email}</Text>
-            {'\n\n'}
-            Tap the link to activate your account, then come back and sign in.
-          </Text>
+          {resendNote !== null && (
+            <Text style={styles.resendNote}>{resendNote}</Text>
+          )}
 
-          <AppButton
-            label="Back to Sign In"
-            variant="primary"
-            size="lg"
-            fullWidth
-            onPress={() => {
-              setEmailConfirmSent(false);
-              setMode('signin');
-              setPassword('');
-              setConfirmPassword('');
-              setError(null);
-            }}
-          />
+          <View style={styles.confirmActions}>
+            <AppButton
+              label="Resend verification email"
+              variant="secondary"
+              size="lg"
+              fullWidth
+              loading={resending}
+              onPress={handleResend}
+            />
+            <AppButton
+              label="Back to sign in"
+              variant="ghost"
+              size="md"
+              fullWidth
+              onPress={() => {
+                setEmailConfirmSent(false);
+                setResendNote(null);
+                setMode('signin');
+                setPassword('');
+                setConfirmPassword('');
+                setError(null);
+              }}
+            />
+          </View>
         </View>
       </SafeAreaView>
     );
@@ -360,8 +400,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xl,
     gap: Spacing.xl,
   },
-  confirmIcon: {
-    fontSize: 72,
+  confirmHeader: {
+    alignItems: 'center',
+    gap: Spacing.md12,
   },
   confirmTitle: {
     ...TextStyles.headingLarge,
@@ -377,5 +418,20 @@ const styles = StyleSheet.create({
   confirmEmail: {
     color: Colors.textBrand,
     fontWeight: FontWeight.semibold,
+  },
+  confirmHint: {
+    fontSize: FontSize.bodySmall,
+    color: Colors.textTertiary,
+    textAlign: 'center',
+    lineHeight: FontSize.bodySmall * 1.5,
+  },
+  resendNote: {
+    fontSize: FontSize.bodySmall,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+  },
+  confirmActions: {
+    alignSelf: 'stretch',
+    gap: Spacing.sm,
   },
 });

@@ -17,6 +17,9 @@ import { StatusBar } from 'expo-status-bar';
 
 import { envErrorMessage, isEnvConfigured, DISABLE_AGORA } from '@/services/env';
 import { AuthProvider } from '@/hooks/useAuth';
+import { EntitlementProvider } from '@/hooks/useEntitlement';
+import { UnitsProvider } from '@/hooks/useUnits';
+import { ThemeProvider } from '@/theme/ThemeProvider';
 import { Colors } from '@/theme/colors';
 import { FontSize, FontWeight } from '@/theme/typography';
 import { Spacing } from '@/theme/spacing';
@@ -87,17 +90,23 @@ export default function RootLayout() {
   // AuthProvider touches the Supabase client — only mount it once we know the
   // env is present, so the lazy client is never constructed unconfigured.
   return (
-    <AuthProvider>
-      <SafeAreaProvider>
-        <StatusBar style="light" />
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: Colors.background },
-            animation: 'fade',
-          }}
-        />
-      </SafeAreaProvider>
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <EntitlementProvider>
+          <UnitsProvider>
+          <SafeAreaProvider>
+            <StatusBar style="light" />
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: Colors.background },
+                animation: 'fade',
+              }}
+            />
+          </SafeAreaProvider>
+          </UnitsProvider>
+        </EntitlementProvider>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }

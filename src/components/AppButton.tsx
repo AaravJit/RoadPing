@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '@/theme/colors';
+import { useTheme } from '@/theme/ThemeProvider';
 import { FontSize, FontWeight } from '@/theme/typography';
 import { MIN_TOUCH_TARGET, Radius, Spacing } from '@/theme/spacing';
 
@@ -51,7 +52,18 @@ export function AppButton({
   style,
   ...rest
 }: AppButtonProps) {
+  const { accent } = useTheme();
   const isDisabled = disabled || loading;
+
+  // Themed accent only touches the brand-accent variants. `danger` stays red.
+  const themedContainer: ViewStyle | null =
+    variant === 'primary' ? { backgroundColor: accent.accent } : null;
+  const themedLabelColor: string | null =
+    variant === 'primary'
+      ? accent.onAccent
+      : variant === 'ghost'
+        ? accent.accent
+        : null;
 
   async function handlePress(e: Parameters<NonNullable<TouchableOpacityProps['onPress']>>[0]) {
     if (isDisabled) return;
@@ -74,6 +86,7 @@ export function AppButton({
         styles[`variant_${variant}`],
         styles[`size_${size}`],
         ...(fullWidth ? [styles.fullWidth] : []),
+        ...(themedContainer != null ? [themedContainer] : []),
         ...(isDisabled ? [styles.disabled] : []),
         ...(style != null ? [style] : []),
       ]}
@@ -82,7 +95,7 @@ export function AppButton({
       {loading ? (
         <ActivityIndicator
           size="small"
-          color={variant === 'primary' ? Colors.textInverse : Colors.textPrimary}
+          color={variant === 'primary' ? accent.onAccent : Colors.textPrimary}
         />
       ) : (
         <View style={styles.inner}>
@@ -92,6 +105,7 @@ export function AppButton({
               styles.label,
               styles[`labelVariant_${variant}`],
               styles[`labelSize_${size}`],
+              themedLabelColor != null ? { color: themedLabelColor } : null,
               isDisabled && styles.labelDisabled,
             ]}
             numberOfLines={1}

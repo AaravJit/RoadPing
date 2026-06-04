@@ -11,7 +11,9 @@
  */
 import React, { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -32,29 +34,29 @@ import { FontSize, FontWeight, TextStyles } from '@/theme/typography';
 import { Radius, Spacing } from '@/theme/spacing';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
+import { useUnits } from '@/hooks/useUnits';
+import { closestPresetIndex, rangePresetsFor, DEFAULT_RANGE_M } from '@/services/units';
 import {
   updateProfile,
   validateHandle,
   validateDisplayName,
   friendlyProfileError,
 } from '@/services/profile';
+import {
+  pickAvatar,
+  uploadAvatar,
+  removeAvatarFile,
+  friendlyAvatarError,
+  type AvatarSource,
+} from '@/services/avatar';
 import { stopLiveSession } from '@/services/liveSession';
-
-// ─── Range presets ────────────────────────────────────────────────────────────
-
-const RANGE_PRESETS = [
-  { label: '500 m', value: 500 },
-  { label: '1 km', value: 1000 },
-  { label: '2 km', value: 2000 },
-  { label: '3 km', value: 3000 },
-  { label: '5 km', value: 5000 },
-] as const;
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function ProfileScreen() {
   const router = useRouter();
   const { user, isLoading: authLoading, signOut } = useAuth();
+  const { system } = useUnits();
   const { profile, isLoading: profileLoading, refresh } = useProfile(
     user?.id ?? null,
   );
@@ -63,7 +65,10 @@ export default function ProfileScreen() {
   const [handle, setHandle] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
-  const [rangeM, setRangeM] = useState(2000);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  // New users default to 3 miles; existing profiles overwrite this on load.
+  const [rangeM, setRangeM] = useState(DEFAULT_RANGE_M);
   const [dndMode, setDndMode] = useState(false);
 
   // ── Validation state ──────────────────────────────────────────────────────
@@ -151,6 +156,28 @@ export default function ProfileScreen() {
     }
   }
 
+  async function handlePhoto(source: AvatarSource) {
+    if (user === null || photoBusy) return;
+    setPhotoError(null);
+    try {
+      const asset = await pickAvatar(source);
+      if (asset === null) return; // user cancelled — no-op
+      setPhotoBusy(true);
+      const url = await uploadAvatar(user.id, asset);
+      setAvatarUrl(url);
+    } catch (err) {
+      setPhotoError(friendlyAvatarError(err));
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
+
+  function handleRemovePhoto() {
+    setPhotoError(null);
+    setAvatarUrl('');
+    if (user !== null) void removeAvatarFile(user.id);
+  }
+
   function handleSignOut() {
     Alert.alert('Sign out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
@@ -183,6 +210,11 @@ export default function ProfileScreen() {
         >
           {/* ── Header ─────────────────────────────────────────────────────── */}
           <View style={styles.header}>
+            {isInitialSetup && (
+              <View style={styles.stepBadge}>
+                <Text style={styles.stepBadgeText}>STEP 1 OF 2</Text>
+              </View>
+            )}
             <Text style={styles.title}>
               {isInitialSetup ? 'Set up your profile' : 'Edit profile'}
             </Text>
@@ -221,16 +253,71 @@ export default function ProfileScreen() {
               returnKeyType="next"
             />
 
-            <AppInput
-              label="Avatar URL"
-              placeholder="https://… (optional)"
-              value={avatarUrl}
-              onChangeText={setAvatarUrl}
-              keyboardType="url"
-              autoCapitalize="none"
-              helper="Link to a square JPEG or PNG image."
-              returnKeyType="done"
-            />
+            {/* Profile photo */}
+            <View style={styles.photoBlock}>
+              <View style={styles.photoPreviewWrap}>
+                {avatarUrl.length > 0 ? (
+                  <Image
+                    source={{ uri: avatarUrl }}
+                    style={styles.photoPreview}
+                    accessibilityIgnoresInvertColors
+                  />
+                ) : (
+                  <View style={[styles.photoPreview, styles.photoPlaceholder]}>
+                    <Text style={styles.photoInitial}>
+                      {displayName.trim()[0]?.toUpperCase() ?? '?'}
+                    </Text>
+                  </View>
+                )}
+                {photoBusy && (
+                  <View style={styles.photoBusyOverlay}>
+                    <ActivityIndicator color={Colors.primary} />
+                  </View>
+                )}
+              </View>
+
+              <View style={styles.photoActions}>
+                <Text style={styles.photoLabel}>Profile photo</Text>
+                <View style={styles.photoButtons}>
+                  <Pressable
+                    style={styles.photoBtn}
+                    onPress={() => {
+                      void handlePhoto('library');
+                    }}
+                    disabled={photoBusy}
+                    accessibilityRole="button"
+                    accessibilityLabel="Choose photo from library"
+                  >
+                    <Text style={styles.photoBtnText}>Choose from Library</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.photoBtn}
+                    onPress={() => {
+                      void handlePhoto('camera');
+                    }}
+                    disabled={photoBusy}
+                    accessibilityRole="button"
+                    accessibilityLabel="Take a photo"
+                  >
+                    <Text style={styles.photoBtnText}>Take Photo</Text>
+                  </Pressable>
+                </View>
+                {avatarUrl.length > 0 && (
+                  <Pressable
+                    onPress={handleRemovePhoto}
+                    disabled={photoBusy}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Remove photo"
+                  >
+                    <Text style={styles.photoRemove}>Remove Photo</Text>
+                  </Pressable>
+                )}
+              </View>
+            </View>
+            {photoError !== null && (
+              <Text style={styles.photoErrorText}>{photoError}</Text>
+            )}
           </View>
 
           {/* ── Broadcast range ────────────────────────────────────────────── */}
@@ -241,30 +328,37 @@ export default function ProfileScreen() {
             </Text>
 
             <View style={styles.rangePresets} accessibilityRole="radiogroup">
-              {RANGE_PRESETS.map((preset) => (
-                <Pressable
-                  key={preset.value}
-                  style={[
-                    styles.rangeChip,
-                    rangeM === preset.value && styles.rangeChipActive,
-                  ]}
-                  onPress={() => {
-                    setRangeM(preset.value);
-                  }}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected: rangeM === preset.value }}
-                  accessibilityLabel={`${preset.label} broadcast range`}
-                >
-                  <Text
-                    style={[
-                      styles.rangeChipLabel,
-                      rangeM === preset.value && styles.rangeChipLabelActive,
-                    ]}
-                  >
-                    {preset.label}
-                  </Text>
-                </Pressable>
-              ))}
+              {(() => {
+                const presets = rangePresetsFor(system);
+                const selIdx = closestPresetIndex(presets, rangeM);
+                return presets.map((preset, i) => {
+                  const selected = i === selIdx;
+                  return (
+                    <Pressable
+                      key={preset.value}
+                      style={[
+                        styles.rangeChip,
+                        selected && styles.rangeChipActive,
+                      ]}
+                      onPress={() => {
+                        setRangeM(preset.value);
+                      }}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected }}
+                      accessibilityLabel={`${preset.label} broadcast range`}
+                    >
+                      <Text
+                        style={[
+                          styles.rangeChipLabel,
+                          selected && styles.rangeChipLabelActive,
+                        ]}
+                      >
+                        {preset.label}
+                      </Text>
+                    </Pressable>
+                  );
+                });
+              })()}
             </View>
           </View>
 
@@ -272,21 +366,23 @@ export default function ProfileScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>Privacy</Text>
 
-            {/* Private zones link */}
-            <Pressable
-              style={styles.linkRow}
-              onPress={() => router.push('/private-zones')}
-              accessibilityRole="button"
-              accessibilityLabel="Manage private zones"
-            >
-              <View style={styles.linkRowText}>
-                <Text style={styles.linkRowTitle}>🔒  Private Zones</Text>
-                <Text style={styles.linkRowHint}>
-                  Hide yourself near home, work, or anywhere private.
-                </Text>
-              </View>
-              <Text style={styles.linkRowChevron}>›</Text>
-            </Pressable>
+            {/* Private zones link — secondary nav, hidden during first-run setup */}
+            {!isInitialSetup && (
+              <Pressable
+                style={styles.linkRow}
+                onPress={() => router.push('/private-zones')}
+                accessibilityRole="button"
+                accessibilityLabel="Manage private zones"
+              >
+                <View style={styles.linkRowText}>
+                  <Text style={styles.linkRowTitle}>🔒  Private Zones</Text>
+                  <Text style={styles.linkRowHint}>
+                    Hide yourself near home, work, or anywhere private.
+                  </Text>
+                </View>
+                <Text style={styles.linkRowChevron}>›</Text>
+              </Pressable>
+            )}
 
             <View style={styles.toggleRow}>
               <View style={styles.toggleTextWrap}>
@@ -310,24 +406,26 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          {/* ── Account ────────────────────────────────────────────────────── */}
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>Account</Text>
-            <Pressable
-              style={styles.linkRow}
-              onPress={() => router.push('/settings')}
-              accessibilityRole="button"
-              accessibilityLabel="Open settings"
-            >
-              <View style={styles.linkRowText}>
-                <Text style={styles.linkRowTitle}>⚙️  Settings</Text>
-                <Text style={styles.linkRowHint}>
-                  Privacy, blocked drivers, sign out, and more.
-                </Text>
-              </View>
-              <Text style={styles.linkRowChevron}>›</Text>
-            </Pressable>
-          </View>
+          {/* ── Account — secondary nav, hidden during first-run setup ─────── */}
+          {!isInitialSetup && (
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>Account</Text>
+              <Pressable
+                style={styles.linkRow}
+                onPress={() => router.push('/settings')}
+                accessibilityRole="button"
+                accessibilityLabel="Open settings"
+              >
+                <View style={styles.linkRowText}>
+                  <Text style={styles.linkRowTitle}>⚙️  Settings</Text>
+                  <Text style={styles.linkRowHint}>
+                    Privacy, blocked drivers, sign out, and more.
+                  </Text>
+                </View>
+                <Text style={styles.linkRowChevron}>›</Text>
+              </Pressable>
+            </View>
+          )}
 
           {/* ── Save error ─────────────────────────────────────────────────── */}
           {saveError !== null && (
@@ -384,6 +482,22 @@ const styles = StyleSheet.create({
   header: {
     gap: Spacing.sm,
   },
+  stepBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: Colors.primaryMuted,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    borderRadius: Radius.full,
+    paddingHorizontal: Spacing.md12,
+    paddingVertical: Spacing.xs,
+    marginBottom: Spacing.xs,
+  },
+  stepBadgeText: {
+    fontSize: FontSize.micro,
+    fontWeight: FontWeight.bold,
+    color: Colors.primary,
+    letterSpacing: 1,
+  },
   title: {
     ...TextStyles.headingLarge,
     color: Colors.textPrimary,
@@ -407,6 +521,84 @@ const styles = StyleSheet.create({
   sectionHint: {
     fontSize: FontSize.caption,
     color: Colors.textTertiary,
+    marginTop: -Spacing.sm,
+  },
+
+  // ── Profile photo ──────────────────────────────────────────────────────────
+  photoBlock: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.md,
+  },
+  photoPreviewWrap: {
+    width: 72,
+    height: 72,
+  },
+  photoPreview: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: Colors.surfaceElevated,
+  },
+  photoPlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primaryMuted,
+  },
+  photoInitial: {
+    fontSize: FontSize.heading,
+    fontWeight: FontWeight.bold,
+    color: Colors.primary,
+  },
+  photoBusyOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 36,
+    backgroundColor: 'rgba(10, 10, 20, 0.55)',
+  },
+  photoActions: {
+    flex: 1,
+    gap: Spacing.sm,
+  },
+  photoLabel: {
+    fontSize: FontSize.label,
+    fontWeight: FontWeight.medium,
+    color: Colors.textSecondary,
+  },
+  photoButtons: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+  },
+  photoBtn: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surfaceElevated,
+  },
+  photoBtnText: {
+    fontSize: FontSize.caption,
+    fontWeight: FontWeight.semibold,
+    color: Colors.textPrimary,
+  },
+  photoRemove: {
+    fontSize: FontSize.caption,
+    color: Colors.error,
+    fontWeight: FontWeight.medium,
+  },
+  photoErrorText: {
+    fontSize: FontSize.caption,
+    color: Colors.error,
     marginTop: -Spacing.sm,
   },
 

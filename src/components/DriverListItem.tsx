@@ -13,6 +13,7 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SpeakingIndicator } from './SpeakingIndicator';
 import { Colors } from '@/theme/colors';
+import { useUnits } from '@/hooks/useUnits';
 import { FontSize, FontWeight } from '@/theme/typography';
 import { Radius, Spacing } from '@/theme/spacing';
 import type { NearbyDriverCard, VehicleType } from '@/services/types';
@@ -26,12 +27,6 @@ const VEHICLE_EMOJI: Record<VehicleType, string> = {
   other: '🛞',
 };
 
-function fmtDist(m: number): string {
-  if (m < 1000) return `${m} m`;
-  const km = m / 1000;
-  return km >= 10 ? `${Math.round(km)} km` : `${km.toFixed(1)} km`;
-}
-
 interface DriverListItemProps {
   driver: NearbyDriverCard;
   selected: boolean;
@@ -43,6 +38,7 @@ export function DriverListItem({
   selected,
   onPress,
 }: DriverListItemProps) {
+  const { formatDistance } = useUnits();
   const emoji =
     driver.vehicle_type !== null ? VEHICLE_EMOJI[driver.vehicle_type] : '🚗';
 
@@ -95,7 +91,7 @@ export function DriverListItem({
           {personLine}
         </Text>
         <Text style={styles.metaLine} numberOfLines={1}>
-          ~{fmtDist(driver.approximate_distance_m)}
+          {formatDistance(driver.approximate_distance_m, { approx: true })}
           {' · '}
           <Text
             style={

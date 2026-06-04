@@ -5,7 +5,7 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Colors } from '@/theme/colors';
 import { FontSize, FontWeight } from '@/theme/typography';
-import { Spacing } from '@/theme/spacing';
+import { Radius, Spacing } from '@/theme/spacing';
 import { AppButton } from './AppButton';
 
 interface ErrorStateProps {
@@ -28,7 +28,9 @@ export function ErrorState({
       style={[styles.container, fill && styles.fill]}
       accessibilityRole="alert"
     >
-      <Text style={styles.emoji}>⚠️</Text>
+      <View style={styles.iconBadge}>
+        <Text style={styles.emoji}>⚠️</Text>
+      </View>
       <Text style={styles.title}>{title}</Text>
       {message != null && (
         <Text style={styles.message}>{message}</Text>
@@ -57,9 +59,19 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
-  emoji: {
-    fontSize: 36,
+  iconBadge: {
+    width: 72,
+    height: 72,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.errorMuted,
+    borderWidth: 1,
+    borderColor: Colors.error,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: Spacing.sm,
+  },
+  emoji: {
+    fontSize: 32,
   },
   title: {
     fontSize: FontSize.subheading,

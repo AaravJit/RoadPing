@@ -12,15 +12,18 @@
  * flash-of-wrong-screen.
  */
 import React from 'react';
-import { Redirect } from 'expo-router';
+import { Redirect, type Href } from 'expo-router';
 
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useVehicles } from '@/hooks/useVehicles';
+import { useOnboardingSeen } from '@/hooks/useOnboardingSeen';
 import { LoadingState } from '@/components/LoadingState';
 
 export default function IndexScreen() {
   const { user, isLoading: authLoading } = useAuth();
+  const { seen: onboardingSeen, loading: onboardingLoading } =
+    useOnboardingSeen();
   const { isLoading: profileLoading, isComplete } = useProfile(user?.id ?? null);
   const {
     isLoading: vehiclesLoading,
@@ -36,6 +39,16 @@ export default function IndexScreen() {
   // ── 2. Not signed in → onboarding ────────────────────────────────────────
   if (user === null) {
     return <Redirect href="/onboarding" />;
+  }
+
+  // ── 2b. Signed in but hasn't seen the first-time education → /welcome ─────
+  if (onboardingLoading) {
+    return <LoadingState message="Starting RoadPing…" />;
+  }
+  if (!onboardingSeen) {
+    // `/welcome` is a new route; the cast keeps tsc happy until expo-router
+    // regenerates its typed-routes on the next dev-server/build run.
+    return <Redirect href={'/welcome' as Href} />;
   }
 
   // ── 3. Signed in — wait for profile fetch ────────────────────────────────

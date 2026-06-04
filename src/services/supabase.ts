@@ -5,7 +5,10 @@
  *  - Only the anon (public) key is used here. Never the service-role key.
  *  - Sessions are persisted via AsyncStorage so the user stays logged in.
  *  - URL polyfill must be imported before createClient (handled by the import below).
- *  - detectSessionInUrl is false — deep-link auth is not used in this native app.
+ *  - flowType 'pkce' — email verification links come back as `?code=…` which we
+ *    exchange for a session in app/auth/callback.tsx. No tokens ride in the URL.
+ *  - detectSessionInUrl is false — RN has no window URL; the callback route
+ *    handles the deep link explicitly via exchangeCodeForSession().
  *
  * STARTUP SAFETY:
  *  createClient() THROWS ("supabaseUrl is required.") when the env vars are
@@ -40,6 +43,7 @@ export function getSupabase(): SupabaseClient<Database> {
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: false,
+      flowType: 'pkce',
     },
   });
   return _client;

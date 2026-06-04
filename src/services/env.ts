@@ -4,10 +4,32 @@
  * All public env vars must be prefixed EXPO_PUBLIC_ so Metro bundles them.
  * No service-role key ever lives here or in the mobile app.
  *
+ * IMPORTANT — STATIC REFERENCES ONLY:
+ * Expo public env vars are inlined into the JS bundle by Metro/EAS at build
+ * time. That inlining is a *textual* substitution of `process.env.EXPO_PUBLIC_X`
+ * with the literal value. It ONLY works with static dot notation. Reading them
+ * dynamically (e.g. `process.env[name]` or `process.env['EXPO_PUBLIC_X']`)
+ * leaves the lookup untouched, so at runtime in a release build the value is
+ * `undefined` — which is exactly why TestFlight showed "Configuration Error"
+ * despite the vars being set in EAS. Never read these dynamically.
+ *
  * Call `validateEnv()` once at app startup (root layout) to fail fast
  * with a clear message rather than a cryptic runtime crash later.
  */
 
+/**
+ * Typed environment variables.
+ *
+ * Each value is read with STATIC dot notation so Metro/EAS can inline it into
+ * the production bundle. Do not refactor these into a dynamic lookup.
+ */
+export const ENV = {
+  SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL ?? '',
+  SUPABASE_ANON_KEY: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '',
+  DISABLE_AGORA: process.env.EXPO_PUBLIC_DISABLE_AGORA === 'true',
+} as const;
+
+/** Required vars, keyed by the EXPO_PUBLIC_ name for human-readable messages. */
 const REQUIRED_VARS = [
   'EXPO_PUBLIC_SUPABASE_URL',
   'EXPO_PUBLIC_SUPABASE_ANON_KEY',
@@ -16,22 +38,16 @@ const REQUIRED_VARS = [
 type RequiredVar = (typeof REQUIRED_VARS)[number];
 
 /**
- * Read a single env var. Returns empty string in Expo Go when .env is not
- * present so the app can still render an error screen instead of crashing.
- */
-function readVar(key: RequiredVar): string {
-  return process.env[key] ?? '';
-}
-
-/**
  * Returns the list of required env vars that are missing/empty.
+ * Checks the statically-inlined ENV values (never a dynamic lookup).
  * NEVER throws — safe to call at module-import time or during render.
  */
 export function missingEnvVars(): RequiredVar[] {
-  return REQUIRED_VARS.filter((key) => {
-    const value = process.env[key];
-    return typeof value !== 'string' || value.length === 0;
-  });
+  const missing: RequiredVar[] = [];
+  if (ENV.SUPABASE_URL.length === 0) missing.push('EXPO_PUBLIC_SUPABASE_URL');
+  if (ENV.SUPABASE_ANON_KEY.length === 0)
+    missing.push('EXPO_PUBLIC_SUPABASE_ANON_KEY');
+  return missing;
 }
 
 /** True when every required env var is present. Never throws. */
@@ -72,13 +88,14 @@ export function validateEnv(): void {
 }
 
 /**
- * Typed, validated environment variables.
- * Only access this after calling `validateEnv()`.
+ * Safe startup check. Logs only presence/absence — NEVER the actual values.
+ * Helps confirm in TestFlight device logs whether static inlining worked.
  */
-export const ENV = {
-  SUPABASE_URL: readVar('EXPO_PUBLIC_SUPABASE_URL'),
-  SUPABASE_ANON_KEY: readVar('EXPO_PUBLIC_SUPABASE_ANON_KEY'),
-} as const;
+console.log(
+  `[RoadPing] env static check — url present: ${
+    ENV.SUPABASE_URL.length > 0 ? 'yes' : 'no'
+  }, anon present: ${ENV.SUPABASE_ANON_KEY.length > 0 ? 'yes' : 'no'}`
+);
 
 /**
  * Screenshot/demo mode flag.
@@ -109,8 +126,7 @@ export const SCREENSHOT_MODE: boolean =
  *
  * Phase 15 Agora code is NOT removed — only gated behind this flag.
  */
-export const DISABLE_AGORA: boolean =
-  process.env.EXPO_PUBLIC_DISABLE_AGORA === 'true';
+export const DISABLE_AGORA: boolean = ENV.DISABLE_AGORA;
 
 /** True when running inside Expo Go (no native modules available). */
 export const IS_EXPO_GO =

@@ -16,6 +16,7 @@ import {
   View,
 } from 'react-native';
 import { Colors } from '@/theme/colors';
+import { useTheme } from '@/theme/ThemeProvider';
 import { FontSize, FontWeight } from '@/theme/typography';
 import { HOLD_TO_TALK_SIZE, Spacing } from '@/theme/spacing';
 import type { HoldState } from '@/hooks/useHoldToTalk';
@@ -33,6 +34,7 @@ export function HoldToTalkButton({
   onPressIn,
   onPressOut,
 }: HoldToTalkButtonProps) {
+  const { accent } = useTheme();
   const scale = useRef(new Animated.Value(1)).current;
   const ringScale = useRef(new Animated.Value(1)).current;
   const ringOpacity = useRef(new Animated.Value(0)).current;
@@ -119,13 +121,21 @@ export function HoldToTalkButton({
         <Animated.View
           style={[
             styles.button,
+            // Idle/ready accent is themed; speaking & disabled override below.
+            { backgroundColor: accent.accent, borderColor: accent.accentDim },
             speaking && styles.buttonSpeaking,
             disabled && styles.buttonDisabled,
             { transform: [{ scale }] },
           ]}
         >
           <Text style={styles.icon}>🎙</Text>
-          <Text style={[styles.label, speaking && styles.labelSpeaking]}>
+          <Text
+            style={[
+              styles.label,
+              { color: accent.onAccent },
+              speaking && styles.labelSpeaking,
+            ]}
+          >
             {label}
           </Text>
         </Animated.View>

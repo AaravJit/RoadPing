@@ -16,6 +16,7 @@ import { LoadingState } from './LoadingState';
 import { EmptyState } from './EmptyState';
 import { ErrorState } from './ErrorState';
 import { Colors } from '@/theme/colors';
+import { useUnits } from '@/hooks/useUnits';
 import { FontSize, FontWeight } from '@/theme/typography';
 import { Spacing } from '@/theme/spacing';
 import type { NearbyDriverCard } from '@/services/types';
@@ -39,7 +40,8 @@ export function NearbyRadar({
   onBlock,
   onReport,
 }: NearbyRadarProps) {
-  const rangeLabel = rangeM >= 1000 ? `${(rangeM / 1000).toFixed(1)} km` : `${rangeM} m`;
+  const { formatRange } = useUnits();
+  const rangeLabel = formatRange(rangeM);
 
   return (
     <View style={styles.wrap}>

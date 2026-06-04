@@ -20,25 +20,27 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
 
-import { AppButton } from '@/components/AppButton';
 import { LoadingState } from '@/components/LoadingState';
+import { ThemePicker } from '@/components/ThemePicker';
 import { Colors } from '@/theme/colors';
+import { useTheme } from '@/theme/ThemeProvider';
 import { FontSize, FontWeight } from '@/theme/typography';
 import { Radius, Spacing } from '@/theme/spacing';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
+import { useVehicles } from '@/hooks/useVehicles';
+import { useEntitlement } from '@/hooks/useEntitlement';
+import { useUnits } from '@/hooks/useUnits';
+import { useLiveMapBehavior } from '@/hooks/useLiveMapBehavior';
+import {
+  closestPresetIndex,
+  rangePresetsFor,
+  DEFAULT_RANGE_M,
+} from '@/services/units';
 import { updateProfile } from '@/services/profile';
 import { stopLiveSession } from '@/services/liveSession';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-
-const RANGE_PRESETS = [
-  { label: '500 m', value: 500 },
-  { label: '1 km', value: 1000 },
-  { label: '2 km', value: 2000 },
-  { label: '3 km', value: 3000 },
-  { label: '5 km', value: 5000 },
-] as const;
 
 const APP_VERSION: string =
   (Constants.expoConfig?.version as string | undefined) ?? '1.0.0';
@@ -54,17 +56,25 @@ function SectionLabel({ label }: { label: string }) {
 interface LinkRowProps {
   title: string;
   hint?: string;
+  /** Current value/status shown on the right (e.g. the active vehicle). */
+  value?: string;
   onPress: () => void;
   variant?: 'default' | 'danger';
 }
 
-function LinkRow({ title, hint, onPress, variant = 'default' }: LinkRowProps) {
+function LinkRow({
+  title,
+  hint,
+  value,
+  onPress,
+  variant = 'default',
+}: LinkRowProps) {
   return (
     <Pressable
       style={styles.linkRow}
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={title}
+      accessibilityLabel={value !== undefined ? `${title}, ${value}` : title}
     >
       <View style={styles.linkRowText}>
         <Text
@@ -79,6 +89,11 @@ function LinkRow({ title, hint, onPress, variant = 'default' }: LinkRowProps) {
           <Text style={styles.linkRowHint}>{hint}</Text>
         )}
       </View>
+      {value !== undefined && (
+        <Text style={styles.linkRowValue} numberOfLines={1}>
+          {value}
+        </Text>
+      )}
       <Text style={styles.linkRowChevron}>›</Text>
     </Pressable>
   );
@@ -88,12 +103,18 @@ function LinkRow({ title, hint, onPress, variant = 'default' }: LinkRowProps) {
 
 export default function SettingsScreen() {
   const router = useRouter();
+  const { accent } = useTheme();
+  const { isPlus, purchasesAvailable } = useEntitlement();
+  const { system, setSystem, formatRange } = useUnits();
+  const { behavior: liveMapBehavior, setBehavior: setLiveMapBehavior } =
+    useLiveMapBehavior();
   const { user, signOut } = useAuth();
   const { profile, isLoading: profileLoading, refresh: refreshProfile } =
     useProfile(user?.id ?? null);
+  const { primary: primaryVehicle } = useVehicles(user?.id ?? null);
 
   const [dndMode, setDndMode] = useState(false);
-  const [rangeM, setRangeM] = useState(2000);
+  const [rangeM, setRangeM] = useState(DEFAULT_RANGE_M);
   const [saving, setSaving] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
 
@@ -133,7 +154,7 @@ export default function SettingsScreen() {
       await updateProfile(user.id, { default_range_m: value });
       await refreshProfile();
     } catch {
-      setRangeM(profile?.default_range_m ?? 2000); // revert
+      setRangeM(profile?.default_range_m ?? DEFAULT_RANGE_M); // revert
       Alert.alert('Could not update', 'Please try again.');
     } finally {
       setSaving(false);
@@ -178,6 +199,12 @@ export default function SettingsScreen() {
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
+  const rangePresets = rangePresetsFor(system);
+  const selectedRangeIndex = closestPresetIndex(rangePresets, rangeM);
+  const activeVehicleLabel = primaryVehicle?.label ?? 'Not set';
+  const rangeValueLabel = formatRange(rangeM);
+  const unitsValueLabel = system === 'imperial' ? 'Miles' : 'Kilometers';
+
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       {/* Header */}
@@ -198,9 +225,207 @@ export default function SettingsScreen() {
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Preferences ──────────────────────────────────────────────────── */}
+        {/* ── Account ──────────────────────────────────────────────────────── */}
         <View style={styles.section}>
-          <SectionLabel label="Preferences" />
+          <SectionLabel label="Account" />
+          <LinkRow
+            title="Profile"
+            hint="Update your name and photo."
+            onPress={() => router.push('/profile')}
+          />
+          <Pressable
+            style={styles.linkRow}
+            onPress={handleSignOut}
+            disabled={signingOut}
+            accessibilityRole="button"
+            accessibilityLabel="Sign out"
+          >
+            <View style={styles.linkRowText}>
+              <Text style={[styles.linkRowTitle, styles.linkRowTitleDanger]}>
+                {signingOut ? 'Signing out…' : 'Sign Out'}
+              </Text>
+              <Text style={styles.linkRowHint}>
+                End your session on this device.
+              </Text>
+            </View>
+          </Pressable>
+        </View>
+
+        {/* ── RoadPing ─────────────────────────────────────────────────────── */}
+        <View style={styles.section}>
+          <SectionLabel label="RoadPing" />
+
+          {/* Live range */}
+          <View style={styles.rangeBlock}>
+            <View style={styles.blockTitleRow}>
+              <Text style={styles.toggleTitle}>Live Range</Text>
+              <Text style={[styles.blockValue, { color: accent.accent }]}>
+                {rangeValueLabel}
+              </Text>
+            </View>
+            <Text style={styles.toggleHint}>
+              Choose how far RoadPing looks for nearby drivers.
+            </Text>
+            <View style={styles.rangePresets} accessibilityRole="radiogroup">
+              {rangePresets.map((preset, i) => {
+                const selected = i === selectedRangeIndex;
+                return (
+                  <Pressable
+                    key={preset.value}
+                    style={[
+                      styles.rangeChip,
+                      selected && styles.rangeChipActive,
+                      selected && {
+                        backgroundColor: accent.accentMuted,
+                        borderColor: accent.accent,
+                      },
+                      saving && styles.rangeChipDisabled,
+                    ]}
+                    onPress={() => {
+                      if (!saving) void handleRangeChange(preset.value);
+                    }}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected }}
+                    accessibilityLabel={`${preset.label} broadcast range`}
+                  >
+                    <Text
+                      style={[
+                        styles.rangeChipLabel,
+                        selected && styles.rangeChipLabelActive,
+                        selected && { color: accent.accent },
+                      ]}
+                    >
+                      {preset.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          {/* Distance units */}
+          <View style={styles.rangeBlock}>
+            <View style={styles.blockTitleRow}>
+              <Text style={styles.toggleTitle}>Distance Units</Text>
+              <Text style={[styles.blockValue, { color: accent.accent }]}>
+                {unitsValueLabel}
+              </Text>
+            </View>
+            <Text style={styles.toggleHint}>
+              Switch between miles and kilometers.
+            </Text>
+            <View style={styles.segment} accessibilityRole="radiogroup">
+              {(['imperial', 'metric'] as const).map((opt) => {
+                const active = system === opt;
+                return (
+                  <Pressable
+                    key={opt}
+                    onPress={() => setSystem(opt)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: active }}
+                    accessibilityLabel={
+                      opt === 'imperial' ? 'Imperial (mi / ft)' : 'Metric (km / m)'
+                    }
+                    style={[
+                      styles.segmentItem,
+                      active && { backgroundColor: accent.accentMuted, borderColor: accent.accent },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.segmentLabel,
+                        active && { color: accent.accent, fontWeight: FontWeight.semibold },
+                      ]}
+                    >
+                      {opt === 'imperial' ? 'Imperial · mi/ft' : 'Metric · km/m'}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          {/* Live map behavior */}
+          <View style={styles.rangeBlock}>
+            <Text style={styles.toggleTitle}>Live Map Behavior</Text>
+            <Text style={styles.toggleHint}>
+              Choose what happens when you leave the app.
+            </Text>
+            <View style={styles.behaviorList} accessibilityRole="radiogroup">
+              {(
+                [
+                  {
+                    key: 'pause' as const,
+                    title: 'Pause when app closes',
+                    hint: 'Recommended. You stop broadcasting the moment you leave the app or it goes to the background.',
+                    badge: null,
+                  },
+                  {
+                    key: 'alwaysOn' as const,
+                    title: 'Always On',
+                    hint: 'Stay live in the background.',
+                    badge: 'Soon',
+                  },
+                ]
+              ).map((opt) => {
+                const active = liveMapBehavior === opt.key;
+                return (
+                  <Pressable
+                    key={opt.key}
+                    onPress={() => setLiveMapBehavior(opt.key)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: active }}
+                    accessibilityLabel={opt.title}
+                    style={[
+                      styles.behaviorRow,
+                      active && {
+                        backgroundColor: accent.accentMuted,
+                        borderColor: accent.accent,
+                      },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.behaviorRadio,
+                        active && { borderColor: accent.accent },
+                      ]}
+                    >
+                      {active && (
+                        <View
+                          style={[
+                            styles.behaviorRadioDot,
+                            { backgroundColor: accent.accent },
+                          ]}
+                        />
+                      )}
+                    </View>
+                    <View style={styles.behaviorText}>
+                      <View style={styles.behaviorTitleRow}>
+                        <Text style={styles.behaviorTitle}>{opt.title}</Text>
+                        {opt.badge !== null && (
+                          <View style={styles.behaviorBadge}>
+                            <Text style={styles.behaviorBadgeText}>
+                              {opt.badge}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={styles.behaviorHint}>{opt.hint}</Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {liveMapBehavior === 'alwaysOn' && (
+              <Text style={styles.behaviorNote}>
+                RoadPing currently pauses when you leave the app. Always On
+                requires background location support and will be added in a
+                future build — your live session still stops in the background
+                for now.
+              </Text>
+            )}
+          </View>
 
           {/* Do Not Disturb */}
           <View style={styles.toggleRow}>
@@ -216,52 +441,45 @@ export default function SettingsScreen() {
                 void handleToggleDnd(v);
               }}
               disabled={saving}
-              trackColor={{ false: Colors.border, true: Colors.primaryMuted }}
-              thumbColor={dndMode ? Colors.primary : Colors.textTertiary}
+              trackColor={{ false: Colors.border, true: accent.accentMuted }}
+              thumbColor={dndMode ? accent.accent : Colors.textTertiary}
               accessibilityLabel="Do Not Disturb mode"
               accessibilityRole="switch"
             />
           </View>
-
-          {/* Default broadcast range */}
-          <View style={styles.rangeBlock}>
-            <Text style={styles.toggleTitle}>Default Broadcast Range</Text>
-            <Text style={styles.toggleHint}>
-              Drivers within this radius can see you when you go live.
-            </Text>
-            <View style={styles.rangePresets} accessibilityRole="radiogroup">
-              {RANGE_PRESETS.map((preset) => (
-                <Pressable
-                  key={preset.value}
-                  style={[
-                    styles.rangeChip,
-                    rangeM === preset.value && styles.rangeChipActive,
-                    saving && styles.rangeChipDisabled,
-                  ]}
-                  onPress={() => {
-                    if (!saving) void handleRangeChange(preset.value);
-                  }}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected: rangeM === preset.value }}
-                  accessibilityLabel={`${preset.label} broadcast range`}
-                >
-                  <Text
-                    style={[
-                      styles.rangeChipLabel,
-                      rangeM === preset.value && styles.rangeChipLabelActive,
-                    ]}
-                  >
-                    {preset.label}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
         </View>
 
-        {/* ── Community ────────────────────────────────────────────────────── */}
+        {/* ── Vehicle ──────────────────────────────────────────────────────── */}
         <View style={styles.section}>
-          <SectionLabel label="Community" />
+          <SectionLabel label="Vehicle" />
+          <LinkRow
+            title="Manage Vehicle"
+            hint="Update the vehicle shown on your live map."
+            value={activeVehicleLabel}
+            onPress={() => router.push('/vehicle')}
+          />
+        </View>
+
+        {/* ── Appearance ───────────────────────────────────────────────────── */}
+        <View style={styles.section}>
+          <SectionLabel label="Appearance" />
+          <Text style={styles.toggleHint}>
+            Match RoadPing to your cockpit style. Applies instantly.
+          </Text>
+          <ThemePicker />
+        </View>
+
+        {/* ── Subscription ─────────────────────────────────────────────────── */}
+        <View style={styles.section}>
+          <SectionLabel label="Subscription" />
+          <LinkRow
+            title="⭐  RoadPing Plus"
+            hint="Manage premium features and future subscription options."
+            value={
+              isPlus ? 'Active' : purchasesAvailable ? undefined : 'Free'
+            }
+            onPress={() => router.push('/plus')}
+          />
           <LinkRow
             title="🚗  Rooms"
             hint="Private drive rooms with group hold-to-talk."
@@ -269,12 +487,12 @@ export default function SettingsScreen() {
           />
         </View>
 
-        {/* ── Privacy ──────────────────────────────────────────────────────── */}
+        {/* ── Privacy & Safety ─────────────────────────────────────────────── */}
         <View style={styles.section}>
-          <SectionLabel label="Privacy" />
+          <SectionLabel label="Privacy & Safety" />
           <LinkRow
             title="🔒  Private Zones"
-            hint="Hide yourself near home, work, or anywhere private."
+            hint="Hide your live presence near saved places."
             onPress={() => router.push('/private-zones')}
           />
           <LinkRow
@@ -282,11 +500,6 @@ export default function SettingsScreen() {
             hint="Manage drivers you've blocked."
             onPress={() => router.push('/blocked-users')}
           />
-        </View>
-
-        {/* ── Legal & Support ─────────────────────────────────────────────── */}
-        <View style={styles.section}>
-          <SectionLabel label="Legal & Support" />
           <LinkRow
             title="📄  Privacy Policy"
             hint="What we collect, why, and what we don't do."
@@ -302,28 +515,12 @@ export default function SettingsScreen() {
             hint={SUPPORT_EMAIL}
             onPress={handleSupport}
           />
-        </View>
-
-        {/* ── Account ──────────────────────────────────────────────────────── */}
-        <View style={styles.section}>
-          <SectionLabel label="Account" />
-          <View style={styles.actionGap}>
-            <AppButton
-              label={signingOut ? 'Signing out…' : 'Sign Out'}
-              variant="danger"
-              size="md"
-              fullWidth
-              loading={signingOut}
-              onPress={handleSignOut}
-            />
-            <Pressable
-              onPress={handleDeleteAccount}
-              accessibilityRole="button"
-              accessibilityLabel="Delete account"
-            >
-              <Text style={styles.deleteLink}>Delete account</Text>
-            </Pressable>
-          </View>
+          <LinkRow
+            title="Delete Account"
+            hint="Permanently remove your RoadPing account."
+            variant="danger"
+            onPress={handleDeleteAccount}
+          />
         </View>
 
         {/* ── About ────────────────────────────────────────────────────────── */}
@@ -416,6 +613,25 @@ const styles = StyleSheet.create({
     lineHeight: FontSize.caption * 1.5,
   },
 
+  // Distance-units segmented control
+  segment: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+  },
+  segmentItem: {
+    flex: 1,
+    paddingVertical: Spacing.md12,
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.background,
+    alignItems: 'center',
+  },
+  segmentLabel: {
+    fontSize: FontSize.bodySmall,
+    color: Colors.textSecondary,
+  },
+
   // Range presets
   rangeBlock: {
     backgroundColor: Colors.surface,
@@ -457,6 +673,77 @@ const styles = StyleSheet.create({
     fontWeight: FontWeight.semibold,
   },
 
+  // Live map behavior
+  behaviorList: {
+    gap: Spacing.sm,
+  },
+  behaviorRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.md,
+    backgroundColor: Colors.background,
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.md,
+  },
+  behaviorRadio: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  behaviorRadioDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: Colors.primary,
+  },
+  behaviorText: {
+    flex: 1,
+    gap: 2,
+  },
+  behaviorTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  behaviorTitle: {
+    fontSize: FontSize.body,
+    fontWeight: FontWeight.semibold,
+    color: Colors.textPrimary,
+  },
+  behaviorBadge: {
+    backgroundColor: Colors.surfaceElevated,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 1,
+  },
+  behaviorBadgeText: {
+    fontSize: FontSize.micro,
+    fontWeight: FontWeight.bold,
+    color: Colors.textTertiary,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  behaviorHint: {
+    fontSize: FontSize.caption,
+    color: Colors.textSecondary,
+    lineHeight: FontSize.caption * 1.5,
+  },
+  behaviorNote: {
+    fontSize: FontSize.caption,
+    color: Colors.textTertiary,
+    lineHeight: FontSize.caption * 1.5,
+    fontStyle: 'italic',
+  },
+
   // Link rows
   linkRow: {
     flexDirection: 'row',
@@ -488,6 +775,23 @@ const styles = StyleSheet.create({
   linkRowChevron: {
     fontSize: FontSize.heading,
     color: Colors.textTertiary,
+  },
+  linkRowValue: {
+    fontSize: FontSize.bodySmall,
+    color: Colors.textTertiary,
+    maxWidth: 130,
+    textAlign: 'right',
+  },
+
+  // Inline block title row (title + current value)
+  blockTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  blockValue: {
+    fontSize: FontSize.bodySmall,
+    fontWeight: FontWeight.semibold,
   },
 
   // Account actions
