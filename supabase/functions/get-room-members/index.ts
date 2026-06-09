@@ -73,7 +73,24 @@ Deno.serve(async (req: Request) => {
       return err(500, 'Failed to fetch members');
     }
 
-    const memberList = members ?? [];
+    // ── Hide blocked users (either direction) from the member list ───────────
+    // Mutual block: the requester should not see members they blocked, nor
+    // members who blocked them.
+    const { data: blockRows } = await admin
+      .from('blocks')
+      .select('blocker_id, blocked_id')
+      .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
+
+    const hiddenUserIds = new Set<string>();
+    for (const b of blockRows ?? []) {
+      const row = b as { blocker_id: string; blocked_id: string };
+      hiddenUserIds.add(row.blocker_id === user.id ? row.blocked_id : row.blocker_id);
+    }
+    hiddenUserIds.delete(user.id); // always keep self visible to self
+
+    const memberList = (members ?? []).filter(
+      (m: Record<string, unknown>) => !hiddenUserIds.has(m.user_id as string),
+    );
     const userIds = memberList.map((m: Record<string, unknown>) => m.user_id as string);
 
     // ── Fetch speaking state for this room ───────────────────────────────────

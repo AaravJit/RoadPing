@@ -44,6 +44,8 @@ export type BodyType =
 
 export type ReportReason =
   | 'harassment'
+  | 'threats'
+  | 'hate_or_discrimination'
   | 'inappropriate_content'
   | 'spam'
   | 'impersonation'
@@ -73,6 +75,10 @@ export type ProfileRow = {
   default_range_m: number;
   is_banned: boolean;
   is_shadow_banned: boolean;
+  /** When the user last accepted the Terms/EULA. NULL until first accepted. */
+  accepted_terms_at: string | null;
+  /** Version string of the Terms the user accepted. NULL until first accepted. */
+  accepted_terms_version: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -238,7 +244,7 @@ export interface Database {
       profiles: {
         Row: ProfileRow;
         Insert: Omit<ProfileRow, 'created_at' | 'updated_at' | 'is_banned' | 'is_shadow_banned'>;
-        Update: Partial<Pick<ProfileRow, 'handle' | 'display_name' | 'avatar_url' | 'bio' | 'dnd_mode' | 'default_range_m'>>;
+        Update: Partial<Pick<ProfileRow, 'handle' | 'display_name' | 'avatar_url' | 'bio' | 'dnd_mode' | 'default_range_m' | 'accepted_terms_at' | 'accepted_terms_version'>>;
         Relationships: [];
       };
       vehicles: {

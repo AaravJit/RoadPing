@@ -52,6 +52,7 @@ export function ReportModal({
   const [details, setDetails] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [confirmShown, setConfirmShown] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Reset state whenever the modal opens for a different driver.
   React.useEffect(() => {
@@ -60,12 +61,15 @@ export function ReportModal({
       setDetails('');
       setSubmitting(false);
       setConfirmShown(false);
+      setError(null);
     }
   }, [visible, driver?.user_id]);
 
   async function handleSubmit() {
-    if (driver === null || selected === null) return;
+    // Guard prevents duplicate rapid submissions (debounce via `submitting`).
+    if (driver === null || selected === null || submitting) return;
     setSubmitting(true);
+    setError(null);
     try {
       await reportUser({
         reported_user_id: driver.user_id,
@@ -77,6 +81,9 @@ export function ReportModal({
       });
       setConfirmShown(true);
       onSubmitted?.();
+    } catch {
+      // Fail safe — never crash; let the user retry.
+      setError("Couldn't submit your report. Please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -168,6 +175,12 @@ export function ReportModal({
                   {details.length}/{DETAILS_MAX}
                 </Text>
 
+                {error !== null && (
+                  <Text style={styles.errorText} accessibilityRole="alert">
+                    {error}
+                  </Text>
+                )}
+
                 <View style={styles.actions}>
                   <AppButton
                     label="Submit report"
@@ -193,10 +206,10 @@ export function ReportModal({
             ) : (
               <View style={styles.confirmWrap}>
                 <Text style={styles.confirmEmoji}>✓</Text>
-                <Text style={styles.confirmTitle}>Report received</Text>
+                <Text style={styles.confirmTitle}>Report submitted</Text>
                 <Text style={styles.confirmBody}>
-                  Thanks. Our moderators will review this report. The other
-                  driver hasn’t been notified.
+                  Report submitted. We’ll review it. The other driver hasn’t
+                  been notified.
                 </Text>
                 <AppButton
                   label="Done"
@@ -320,6 +333,11 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-end',
     fontSize: FontSize.caption,
     color: Colors.textTertiary,
+  },
+  errorText: {
+    fontSize: FontSize.bodySmall,
+    color: Colors.error,
+    lineHeight: FontSize.bodySmall * 1.4,
   },
   actions: {
     marginTop: Spacing.md,

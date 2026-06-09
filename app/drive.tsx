@@ -786,22 +786,26 @@ export default function DriveScreen() {
               </View>
             )}
 
-            {/* Location permission required banner */}
+            {/* Location explanation card — shown before the native prompt.
+                Button wording is intentionally neutral ("Continue") per
+                App Store Guideline 5.1.1(iv). The native iOS permission
+                prompt only appears after the user taps it. */}
             {permStatus !== 'granted' && (
               <View style={styles.permCard}>
                 <Text style={styles.permTitle}>
-                  📍 Location needed to go live
+                  📍 Location while you’re active
                 </Text>
                 <Text style={styles.permBody}>
-                  RoadPing uses your location only while active to show nearby
-                  drivers. No history is stored, and your exact coordinates are
-                  never shared.
+                  RoadPing uses your location while you are active to show nearby
+                  road users and enable proximity-based road chat. You can stop
+                  sharing by ending your RoadPing session. No location history is
+                  stored, and your exact coordinates are never shared.
                 </Text>
                 <AppButton
                   label={
                     permStatus === 'denied'
                       ? 'Open iOS Settings'
-                      : 'Enable location'
+                      : 'Continue'
                   }
                   variant="primary"
                   size="md"

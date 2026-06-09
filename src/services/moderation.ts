@@ -36,24 +36,34 @@ export type BlockedUserProfile = {
 
 export const REPORT_REASON_OPTIONS: readonly ReportReasonOption[] = [
   {
-    value: 'dangerous_driving',
-    label: 'Dangerous driving',
-    description: 'Reckless, aggressive, or unsafe behavior.',
+    value: 'harassment',
+    label: 'Harassment or abuse',
+    description: 'Targeted, repeated, or abusive contact.',
   },
   {
-    value: 'harassment',
-    label: 'Harassment',
-    description: 'Targeted, threatening, or abusive contact.',
+    value: 'threats',
+    label: 'Threats or unsafe behavior',
+    description: 'Threatening, intimidating, or dangerous conduct.',
+  },
+  {
+    value: 'hate_or_discrimination',
+    label: 'Hate or discrimination',
+    description: 'Hateful or discriminatory content toward a group.',
   },
   {
     value: 'inappropriate_content',
-    label: 'Inappropriate content',
-    description: 'Voice, name, or vehicle info that violates the rules.',
+    label: 'Sexual or inappropriate content',
+    description: 'Sexual, explicit, or otherwise inappropriate content.',
   },
   {
     value: 'spam',
-    label: 'Spam',
-    description: 'Repetitive or commercial content.',
+    label: 'Spam or scam',
+    description: 'Repetitive, commercial, or deceptive content.',
+  },
+  {
+    value: 'dangerous_driving',
+    label: 'Unsafe driving / road danger',
+    description: 'Reckless, aggressive, or unsafe driving.',
   },
   {
     value: 'impersonation',
