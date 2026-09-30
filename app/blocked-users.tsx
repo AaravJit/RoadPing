@@ -1,40 +1,34 @@
+/**
+ * app/blocked-users.tsx — people you've blocked, with Unblock.
+ * Blocks are mutual and silent; the copy says so.
+ */
 import React from 'react';
-import {
-  Alert,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Alert } from 'react-native';
 
-import { LoadingState } from '@/components/LoadingState';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
-import { Colors } from '@/theme/colors';
-import { FontSize, FontWeight } from '@/theme/typography';
-import { Radius, Spacing } from '@/theme/spacing';
+import { LoadingState } from '@/components/LoadingState';
+import { personHandle, personName } from '@/components/identity';
+import { Avatar, Button, ListRow, ListSection, ScreenBackground, ScreenScroll } from '@/components/ui';
 import { useBlockedUsers } from '@/hooks/useBlockedUsers';
 import type { BlockedUserProfile } from '@/services/moderation';
 
-// ─── BlockedUserRow ───────────────────────────────────────────────────────────
-
-interface BlockedUserRowProps {
+function BlockedUserRow({
+  user,
+  onUnblock,
+  disabled,
+}: {
   user: BlockedUserProfile;
   onUnblock: () => void;
   disabled: boolean;
-}
-
-function BlockedUserRow({ user, onUnblock, disabled }: BlockedUserRowProps) {
-  const initial = user.display_name[0]?.toUpperCase() ?? '?';
+}) {
+  const name = personName(user);
+  const handle = personHandle(user);
 
   function confirmUnblock() {
-    const label = user.handle !== null ? `@${user.handle}` : user.display_name;
     Alert.alert(
-      'Unblock driver?',
-      `You and ${label} will be able to see each other again when both live.`,
+      `Unblock ${name}?`,
+      "You'll be able to see each other again when you're both live. They won't be told.",
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Unblock', onPress: onUnblock },
@@ -43,192 +37,69 @@ function BlockedUserRow({ user, onUnblock, disabled }: BlockedUserRowProps) {
   }
 
   return (
-    <View style={styles.row}>
-      <View style={styles.avatar}>
-        <Text style={styles.avatarLetter}>{initial}</Text>
-      </View>
-
-      <View style={styles.rowInfo}>
-        <Text style={styles.displayName} numberOfLines={1}>
-          {user.display_name}
-        </Text>
-        {user.handle !== null && (
-          <Text style={styles.handle} numberOfLines={1}>
-            @{user.handle}
-          </Text>
-        )}
-      </View>
-
-      <Pressable
-        style={[styles.unblockBtn, disabled && styles.unblockBtnDisabled]}
-        onPress={confirmUnblock}
-        disabled={disabled}
-        accessibilityRole="button"
-        accessibilityLabel={`Unblock ${user.display_name}`}
-      >
-        <Text style={styles.unblockBtnLabel}>Unblock</Text>
-      </Pressable>
-    </View>
+    <ListRow
+      title={name}
+      subtitle={handle !== null && handle !== name ? handle : undefined}
+      leading={<Avatar name={name} uri={user.avatar_url} size={40} />}
+      trailing={
+        <Button
+          label="Unblock"
+          variant="secondary"
+          size="sm"
+          onPress={confirmUnblock}
+          disabled={disabled}
+          accessibilityLabel={`Unblock ${name}`}
+        />
+      }
+    />
   );
 }
 
-// ─── Screen ───────────────────────────────────────────────────────────────────
-
 export default function BlockedUsersScreen() {
-  const router = useRouter();
-  const { blockedUsers, isLoading, isMutating, error, refresh, unblock } =
-    useBlockedUsers();
+  const { blockedUsers, isLoading, isMutating, error, refresh, unblock } = useBlockedUsers();
 
   async function handleUnblock(blockedId: string) {
     try {
       await unblock(blockedId);
     } catch {
-      Alert.alert('Unblock failed', 'Please try again.');
+      Alert.alert("Couldn't unblock", 'Please try again.');
     }
   }
 
-  return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Pressable
-          onPress={() => router.back()}
-          hitSlop={12}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Text style={styles.backBtn}>‹ Back</Text>
-        </Pressable>
-        <Text style={styles.title}>Blocked Drivers</Text>
-        <View style={styles.headerSpacer} />
-      </View>
+  if (isLoading) return <LoadingState message="Loading…" />;
 
-      {isLoading ? (
-        <LoadingState message="Loading…" />
-      ) : error !== null ? (
-        <ErrorState
-          title="Couldn't load"
-          message={error}
-          onRetry={() => {
-            void refresh();
-          }}
-        />
-      ) : blockedUsers.length === 0 ? (
+  if (error !== null) {
+    return (
+      <ScreenBackground>
+        <ErrorState title="Couldn't load blocked drivers" message={error} onRetry={() => void refresh()} />
+      </ScreenBackground>
+    );
+  }
+
+  if (blockedUsers.length === 0) {
+    return (
+      <ScreenBackground>
         <EmptyState
-          icon="🚫"
+          icon="nosign"
           title="No blocked drivers"
-          message="Drivers you block will appear here. They won't be able to see you, and you won't see them."
+          message="When you block someone, you stop seeing each other on RoadPing. They aren't told."
         />
-      ) : (
-        <ScrollView
-          contentContainerStyle={styles.list}
-          showsVerticalScrollIndicator={false}
-        >
-          {blockedUsers.map((u) => (
-            <BlockedUserRow
-              key={u.blocked_id}
-              user={u}
-              onUnblock={() => {
-                void handleUnblock(u.blocked_id);
-              }}
-              disabled={isMutating}
-            />
-          ))}
-        </ScrollView>
-      )}
-    </SafeAreaView>
+      </ScreenBackground>
+    );
+  }
+
+  return (
+    <ScreenScroll>
+      <ListSection footer="Blocked drivers can't see you on the live map, and you won't see them. They aren't told.">
+        {blockedUsers.map((u) => (
+          <BlockedUserRow
+            key={u.blocked_id}
+            user={u}
+            onUnblock={() => void handleUnblock(u.blocked_id)}
+            disabled={isMutating}
+          />
+        ))}
+      </ListSection>
+    </ScreenScroll>
   );
 }
-
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  backBtn: {
-    fontSize: FontSize.body,
-    color: Colors.primary,
-    fontWeight: FontWeight.medium,
-    minWidth: 60,
-  },
-  title: {
-    flex: 1,
-    fontSize: FontSize.body,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textPrimary,
-    textAlign: 'center',
-  },
-  headerSpacer: {
-    minWidth: 60,
-  },
-
-  list: {
-    padding: Spacing.md,
-    gap: Spacing.sm,
-  },
-
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.md,
-  },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: Colors.primaryMuted,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarLetter: {
-    fontSize: FontSize.body,
-    fontWeight: FontWeight.bold,
-    color: Colors.primary,
-  },
-  rowInfo: {
-    flex: 1,
-    gap: 2,
-  },
-  displayName: {
-    fontSize: FontSize.body,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textPrimary,
-  },
-  handle: {
-    fontSize: FontSize.caption,
-    color: Colors.textSecondary,
-  },
-
-  unblockBtn: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderRadius: Radius.sm,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.surfaceElevated,
-  },
-  unblockBtnDisabled: {
-    opacity: 0.4,
-  },
-  unblockBtnLabel: {
-    fontSize: FontSize.caption,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textSecondary,
-  },
-});

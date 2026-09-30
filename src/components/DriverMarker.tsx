@@ -1,91 +1,33 @@
 /**
- * DriverMarker — custom map marker for a nearby driver.
+ * DriverMarker — a nearby driver on the Drive map.
  *
- * Visual language:
- *   • Pill-shaped circular body with the vehicle-category emoji.
- *   • A clean "gamertag" name pill floats above the body.
- *   • Color halo when the driver's vehicle has a known color string.
- *   • Pulsing red ring while the driver is speaking (and not in DND).
- *   • Lifted/larger amber outline when selected (synced with bottom sheet).
+ *   • Round body with the vehicle-type emoji (vehicle identity, not an icon).
+ *   • Optional name pill above (display name / @handle only).
+ *   • Thin paint-color ring when the vehicle color is known.
+ *   • Speaking: live-red border plus a waveform badge — shape, not just color —
+ *     and a calm pulse unless Reduce Motion is on.
+ *   • Selected: larger, accent border.
  *
- * Vehicle category: nearby drivers only carry the COARSE `vehicle_type`
- * (car/motorcycle/truck/van/bicycle/other) via get_nearby_drivers — the fine
- * body style (sedan/coupe/suv/…) is NOT returned for other drivers, so the
- * marker maps the coarse type to the closest icon and falls back to a generic
- * car. (See VEHICLE_EMOJI + the doc note in NearbyMap / types.ts.)
- *
- * Privacy: this component receives a `NearbyDriverCard` only — never any
- * lat/lng. It renders inside react-native-maps <Marker> using the synthetic
- * coordinate computed by NearbyMap. The label only ever shows display name /
- * @handle — never an email or coordinates.
- *
- * Memoized to keep map re-renders cheap when only a sibling marker changed.
+ * Privacy: receives a NearbyDriverCard only, never coordinates. It is drawn at
+ * the synthetic position NearbyMap computes; it shows no direction.
  */
 import React, { memo, useEffect, useRef } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
-import { Colors } from '@/theme/colors';
-import { useTheme } from '@/theme/ThemeProvider';
-import { FontSize, FontWeight } from '@/theme/typography';
+
+import { AppText, Icon } from '@/components/ui';
+import type { NearbyDriverCard } from '@/services/types';
+import { makeStyles, useTheme } from '@/theme/ThemeProvider';
 import { Radius, Spacing } from '@/theme/spacing';
-import type { NearbyDriverCard, VehicleType } from '@/services/types';
-
-const VEHICLE_EMOJI: Record<VehicleType, string> = {
-  car: '🚗',
-  motorcycle: '🏍',
-  truck: '🛻',
-  van: '🚐',
-  bicycle: '🚲',
-  other: '🛞',
-};
-
-/**
- * Safe gamertag text for a nearby driver. Prefers the display name, then the
- * @handle, then a neutral "Driver" fallback. Never an email or coordinates.
- */
-function driverLabel(driver: NearbyDriverCard): string {
-  const name = driver.display_name?.trim();
-  if (name) return name;
-  const handle = driver.handle?.trim();
-  if (handle) return `@${handle}`;
-  return 'Driver';
-}
+import { personName, vehicleEmoji, vehicleSwatch } from './identity';
 
 const MARKER_SIZE = 40;
-const SELECTED_SIZE = 52;
-
-/**
- * Map a common color name to a visual swatch. Unknown colors fall back to
- * the dark surface tone so the marker still reads cleanly. This is *only*
- * a halo accent — the marker itself is always readable.
- */
-const COLOR_SWATCH: Record<string, string> = {
-  black: '#1a1a22',
-  white: '#e5e5ea',
-  silver: '#bfbfc6',
-  gray: '#9a9aa3',
-  grey: '#9a9aa3',
-  red: '#ff3b30',
-  blue: '#0a84ff',
-  green: '#34c759',
-  yellow: '#ffd60a',
-  orange: '#ff9f0a',
-  purple: '#bf5af2',
-  pink: '#ff375f',
-  brown: '#8b6f47',
-  gold: '#d4af37',
-};
-
-function haloColor(color: string | null): string | null {
-  if (color === null) return null;
-  const key = color.trim().toLowerCase();
-  return COLOR_SWATCH[key] ?? null;
-}
+const SELECTED_SIZE = 50;
 
 interface DriverMarkerProps {
   driver: NearbyDriverCard;
   isSpeaking: boolean;
   isSelected: boolean;
-  /** Show the gamertag name pill above the blip (hidden when the map is busy). */
+  /** Show the name pill above the marker (hidden when the map is busy). */
   showLabel?: boolean;
 }
 
@@ -95,97 +37,68 @@ function DriverMarkerInner({
   isSelected,
   showLabel = true,
 }: DriverMarkerProps) {
-  const { accent } = useTheme();
+  const { colors, accent, a11y } = useTheme();
+  const styles = useStyles();
   const pulse = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    if (!isSpeaking) {
+    if (!isSpeaking || a11y.reduceMotion) {
       pulse.stopAnimation();
       pulse.setValue(0);
       return;
     }
     const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, {
-          toValue: 1,
-          duration: 750,
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulse, {
-          toValue: 0,
-          duration: 750,
-          useNativeDriver: true,
-        }),
-      ]),
+      Animated.timing(pulse, { toValue: 1, duration: 1400, useNativeDriver: true }),
     );
     loop.start();
     return () => loop.stop();
-  }, [isSpeaking, pulse]);
+  }, [isSpeaking, pulse, a11y.reduceMotion]);
 
-  const ringOpacity = pulse.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.25, 0.85],
-  });
-  const ringScale = pulse.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 1.55],
-  });
-
-  const emoji = VEHICLE_EMOJI[driver.vehicle_type ?? 'car'] ?? '🚗';
-  const halo = haloColor(driver.vehicle_color);
   const size = isSelected ? SELECTED_SIZE : MARKER_SIZE;
-
-  const labelBorder = isSelected
-    ? accent.accent
-    : isSpeaking
-      ? Colors.live
-      : 'rgba(255,255,255,0.14)';
+  const swatch = vehicleSwatch(driver.vehicle_color);
+  const border = isSpeaking ? colors.live : isSelected ? accent.fill : colors.separatorStrong;
 
   return (
     <View style={styles.outer} pointerEvents="none">
-      {/* Gamertag name pill — display name / @handle only */}
       {showLabel && (
-        <View style={[styles.labelPill, { borderColor: labelBorder }]}>
-          <Text style={styles.labelText} numberOfLines={1}>
-            {driverLabel(driver)}
-          </Text>
+        <View style={[styles.labelPill, (isSelected || isSpeaking) && { borderColor: border }]}>
+          <AppText variant="caption2" weight="semibold" numberOfLines={1} maxScale={1}>
+            {personName(driver)}
+          </AppText>
         </View>
       )}
 
-      {/* Centered marker stack — body + halo + speaking pulse share one centre */}
-      <View style={[styles.stack, { width: size, height: size }]}>
-        {/* Speaking pulse — only when actively speaking */}
-        {isSpeaking && (
+      <View style={[styles.stack, { width: size + 16, height: size + 16 }]}>
+        {isSpeaking && !a11y.reduceMotion && (
           <Animated.View
             style={[
-              styles.speakingRing,
+              styles.pulse,
               {
-                width: size + 16,
-                height: size + 16,
-                borderRadius: (size + 16) / 2,
-                opacity: ringOpacity,
-                transform: [{ scale: ringScale }],
+                width: size,
+                height: size,
+                borderRadius: size / 2,
+                borderColor: colors.live,
+                opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.6, 0] }),
+                transform: [
+                  { scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.4] }) },
+                ],
               },
             ]}
           />
         )}
-
-        {/* Halo behind body — colored if we know the vehicle color */}
-        {halo !== null && (
+        {swatch !== null && (
           <View
             style={[
-              styles.halo,
+              styles.swatch,
               {
-                width: size + 8,
-                height: size + 8,
-                borderRadius: (size + 8) / 2,
-                borderColor: halo,
+                width: size + 6,
+                height: size + 6,
+                borderRadius: (size + 6) / 2,
+                borderColor: swatch,
               },
             ]}
           />
         )}
-
-        {/* Marker body */}
         <View
           style={[
             styles.body,
@@ -193,36 +106,28 @@ function DriverMarkerInner({
               width: size,
               height: size,
               borderRadius: size / 2,
+              borderColor: border,
+              borderWidth: isSpeaking || isSelected ? 2.5 : StyleSheet.hairlineWidth * 2,
             },
-            isSelected && styles.bodySelected,
-            isSelected && {
-              borderColor: accent.accent,
-              backgroundColor: accent.accentMuted,
-            },
-            isSpeaking && !isSelected && styles.bodySpeaking,
           ]}
         >
-          <Text style={[styles.emoji, isSelected && styles.emojiSelected]}>
-            {emoji}
+          <Text style={{ fontSize: isSelected ? 24 : 20 }} allowFontScaling={false}>
+            {vehicleEmoji(driver.vehicle_type)}
           </Text>
         </View>
+        {isSpeaking && (
+          <View style={[styles.badge, { backgroundColor: colors.live }]}>
+            <Icon name="waveform" size={11} color={colors.textOnColor} weight="bold" />
+          </View>
+        )}
       </View>
-
-      {/* Tiny anchor point underneath, so the marker reads as "pinned" */}
-      <View
-        style={[
-          styles.anchor,
-          isSelected && styles.anchorSelected,
-          isSelected && { backgroundColor: accent.accent },
-          isSpeaking && !isSelected && styles.anchorSpeaking,
-        ]}
-      />
     </View>
   );
 }
 
-export const DriverMarker = memo(DriverMarkerInner, (a, b) => {
-  return (
+export const DriverMarker = memo(
+  DriverMarkerInner,
+  (a, b) =>
     a.driver.user_id === b.driver.user_id &&
     a.driver.vehicle_type === b.driver.vehicle_type &&
     a.driver.vehicle_color === b.driver.vehicle_color &&
@@ -230,99 +135,58 @@ export const DriverMarker = memo(DriverMarkerInner, (a, b) => {
     a.driver.handle === b.driver.handle &&
     a.isSpeaking === b.isSpeaking &&
     a.isSelected === b.isSelected &&
-    a.showLabel === b.showLabel
-  );
-});
+    a.showLabel === b.showLabel,
+);
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((t) => ({
   outer: {
     alignItems: 'center',
-    justifyContent: 'center',
+  },
+  labelPill: {
+    maxWidth: 140,
+    backgroundColor: t.colors.surface,
+    borderRadius: Radius.full,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: t.colors.separator,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 2,
+    marginBottom: -4,
+    shadowColor: t.colors.shadow,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: t.scheme === 'dark' ? 0.4 : 0.15,
+    shadowRadius: 3,
   },
   stack: {
     alignItems: 'center',
     justifyContent: 'center',
   },
-  labelPill: {
-    maxWidth: 140,
-    backgroundColor: 'rgba(10, 10, 20, 0.92)',
-    borderRadius: Radius.full,
-    borderWidth: 1,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 2,
-    marginBottom: 4,
-    // subtle lift so the pill reads above the map
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.45,
-    shadowRadius: 4,
-  },
-  labelText: {
-    fontSize: FontSize.micro,
-    fontWeight: FontWeight.semibold,
-    color: '#f2f3f7',
-    letterSpacing: 0.2,
-  },
-  speakingRing: {
+  pulse: {
     position: 'absolute',
     borderWidth: 3,
-    borderColor: Colors.live,
   },
-  halo: {
+  swatch: {
     position: 'absolute',
     borderWidth: 2,
-    opacity: 0.85,
   },
   body: {
-    backgroundColor: 'rgba(20, 20, 28, 0.96)',
-    borderWidth: 2,
-    borderColor: Colors.border,
+    backgroundColor: t.colors.mapMarker,
     alignItems: 'center',
     justifyContent: 'center',
-    // iOS shadow
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.45,
-    shadowRadius: 5,
+    shadowColor: t.colors.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: t.scheme === 'dark' ? 0.45 : 0.2,
+    shadowRadius: 4,
   },
-  bodySelected: {
-    borderColor: Colors.primary,
-    backgroundColor: Colors.primaryMuted,
+  badge: {
+    position: 'absolute',
+    right: 4,
+    top: 4,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: t.colors.mapMarker,
   },
-  bodySpeaking: {
-    borderColor: Colors.live,
-  },
-  emoji: {
-    fontSize: 20,
-  },
-  emojiSelected: {
-    fontSize: 26,
-  },
-  anchor: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: Colors.textTertiary,
-    marginTop: -2,
-  },
-  anchorSelected: {
-    backgroundColor: Colors.primary,
-  },
-  anchorSpeaking: {
-    backgroundColor: Colors.live,
-  },
-});
-
-/** Exposed for callers (NearbyMap) that need the same emoji mapping. */
-export function vehicleEmojiFor(type: VehicleType | null): string {
-  return VEHICLE_EMOJI[type ?? 'car'] ?? '🚗';
-}
-
-/** Exposed for the "YOU" pin styling consistency. */
-export const MARKER_SIZES = {
-  default: MARKER_SIZE,
-  selected: SELECTED_SIZE,
-} as const;
-
-// Re-export so memo + named are both available.
-export { FontWeight };
+}));

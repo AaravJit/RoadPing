@@ -1,34 +1,70 @@
 /**
- * Theme persistence (Phase 16B).
+ * Appearance + accent persistence.
  *
  * Local-only via AsyncStorage — no backend, no schema change. Every operation
- * is fail-safe: a read error falls back to the default theme, and a write error
- * is swallowed so theme storage can never block or crash app usage.
+ * is fail-safe: a read error falls back to the defaults (System appearance,
+ * RoadPing Orange), and a write error is ignored so a storage problem can
+ * never block or crash the app.
  *
- * If a `profile.theme_key` column is ever added server-side, this is the single
- * place to layer it in (read remote → fall back to local → fall back default).
+ * The accent is stored under the original `roadping.themeKey` key; values
+ * from the retired cockpit-theme picker are migrated on read.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { DEFAULT_THEME_KEY, isThemeKey, type ThemeKey } from '@/theme/themes';
+import {
+  DEFAULT_ACCENT_KEY,
+  migrateAccentKey,
+  type AccentKey,
+} from '@/theme/accents';
 
-export const THEME_STORAGE_KEY = 'roadping.themeKey';
+export type AppearancePreference = 'system' | 'light' | 'dark';
 
-/** Load the stored theme key. Never throws; returns the default on any failure. */
-export async function loadThemeKey(): Promise<ThemeKey> {
+export const DEFAULT_APPEARANCE: AppearancePreference = 'system';
+
+export const ACCENT_STORAGE_KEY = 'roadping.themeKey';
+export const APPEARANCE_STORAGE_KEY = 'roadping.appearance';
+
+export function isAppearancePreference(v: unknown): v is AppearancePreference {
+  return v === 'system' || v === 'light' || v === 'dark';
+}
+
+export interface StoredThemePrefs {
+  appearance: AppearancePreference;
+  accent: AccentKey;
+}
+
+/** Load both preferences in one round-trip. Never throws. */
+export async function loadThemePrefs(): Promise<StoredThemePrefs> {
   try {
-    const raw = await AsyncStorage.getItem(THEME_STORAGE_KEY);
-    return isThemeKey(raw) ? raw : DEFAULT_THEME_KEY;
+    const pairs = await AsyncStorage.multiGet([
+      APPEARANCE_STORAGE_KEY,
+      ACCENT_STORAGE_KEY,
+    ]);
+    const rawAppearance = pairs[0]?.[1] ?? null;
+    const rawAccent = pairs[1]?.[1] ?? null;
+    return {
+      appearance: isAppearancePreference(rawAppearance)
+        ? rawAppearance
+        : DEFAULT_APPEARANCE,
+      accent: rawAccent === null ? DEFAULT_ACCENT_KEY : migrateAccentKey(rawAccent),
+    };
   } catch {
-    return DEFAULT_THEME_KEY;
+    return { appearance: DEFAULT_APPEARANCE, accent: DEFAULT_ACCENT_KEY };
   }
 }
 
-/** Persist the theme key. Best-effort; failures are intentionally ignored. */
-export async function saveThemeKey(key: ThemeKey): Promise<void> {
+export async function saveAppearance(value: AppearancePreference): Promise<void> {
   try {
-    await AsyncStorage.setItem(THEME_STORAGE_KEY, key);
+    await AsyncStorage.setItem(APPEARANCE_STORAGE_KEY, value);
   } catch {
-    // Non-blocking — the in-memory theme already applied.
+    // Non-blocking — the in-memory preference already applied.
+  }
+}
+
+export async function saveAccent(value: AccentKey): Promise<void> {
+  try {
+    await AsyncStorage.setItem(ACCENT_STORAGE_KEY, value);
+  } catch {
+    // Non-blocking — the in-memory preference already applied.
   }
 }

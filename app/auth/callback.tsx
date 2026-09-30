@@ -20,22 +20,20 @@
  * Security: tokens/codes are never logged.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Linking from 'expo-linking';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AppButton } from '@/components/AppButton';
 import { LoadingState } from '@/components/LoadingState';
 import { RoadPingLogo } from '@/components/RoadPingLogo';
+import { AppText, Button, Screen } from '@/components/ui';
 import {
   exchangeCodeForSession,
   normalizeOtpType,
   setSessionFromTokens,
   verifyEmailOtp,
 } from '@/services/auth';
-import { Colors } from '@/theme/colors';
-import { FontSize, FontWeight, TextStyles } from '@/theme/typography';
+import { makeStyles } from '@/theme/ThemeProvider';
 import { Spacing } from '@/theme/spacing';
 
 type Status = 'working' | 'error';
@@ -86,6 +84,7 @@ function parseAuthParams(url: string | null): AuthParams {
 
 export default function AuthCallbackScreen() {
   const router = useRouter();
+  const styles = useStyles();
   const url = Linking.useURL();
   const [status, setStatus] = useState<Status>('working');
   const handled = useRef(false);
@@ -167,40 +166,32 @@ export default function AuthCallbackScreen() {
   // ── Expired / invalid link ────────────────────────────────────────────────
   if (status === 'error') {
     return (
-      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+      <Screen>
         <View style={styles.errorContainer}>
-          <RoadPingLogo size={84} />
-
-          <View style={styles.errorText}>
-            <Text style={styles.title}>Link expired</Text>
-            <Text style={styles.body}>
-              This verification link is no longer valid. Request a fresh one and
-              we&apos;ll send it straight to your inbox.
-            </Text>
-          </View>
-
+          <RoadPingLogo size={72} />
+          <AppText variant="title1" weight="bold" align="center" accessibilityRole="header">
+            This link has expired
+          </AppText>
+          <AppText variant="body" color="secondary" align="center">
+            Verification links only work once and for a limited time. Request a
+            new one and we&apos;ll send it to your inbox.
+          </AppText>
           <View style={styles.actions}>
-            <AppButton
-              label="Send a new verification email"
-              variant="primary"
+            <Button
+              label="Send a New Link"
               size="lg"
               fullWidth
-              onPress={() => {
-                router.replace('/auth?mode=signup');
-              }}
+              onPress={() => router.replace('/auth?mode=signup')}
             />
-            <AppButton
-              label="Back to sign in"
-              variant="ghost"
-              size="md"
+            <Button
+              label="Back to Sign In"
+              variant="plain"
               fullWidth
-              onPress={() => {
-                router.replace('/auth?mode=signin');
-              }}
+              onPress={() => router.replace('/auth?mode=signin')}
             />
           </View>
         </View>
-      </SafeAreaView>
+      </Screen>
     );
   }
 
@@ -208,35 +199,17 @@ export default function AuthCallbackScreen() {
   return <LoadingState message="Verifying your email…" />;
 }
 
-const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
+const useStyles = makeStyles(() => ({
   errorContainer: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: Spacing.xl,
-    gap: Spacing.xl,
-  },
-  errorText: {
-    alignItems: 'center',
     gap: Spacing.md12,
-  },
-  title: {
-    ...TextStyles.headingLarge,
-    color: Colors.textPrimary,
-    textAlign: 'center',
-  },
-  body: {
-    ...TextStyles.body,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: FontSize.body * 1.6,
   },
   actions: {
     alignSelf: 'stretch',
     gap: Spacing.sm,
+    marginTop: Spacing.lg,
   },
-});
+}));

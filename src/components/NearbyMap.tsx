@@ -31,21 +31,16 @@
  *   • No lat/lng is ever rendered as a label.
  */
 import React, { useEffect, useRef } from 'react';
-import {
-  Platform,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { Colors } from '@/theme/colors';
-import { useTheme } from '@/theme/ThemeProvider';
-import { FontSize, FontWeight } from '@/theme/typography';
-import { Radius, Spacing } from '@/theme/spacing';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import * as Location from 'expo-location';
+
 import type { NearbyDriverCard } from '@/services/types';
 import type { Coords } from '@/services/location';
+import { makeStyles, useTheme } from '@/theme/ThemeProvider';
+import { Radius } from '@/theme/spacing';
 import { MockMapView } from './MockMapView';
 import { DriverMarker } from './DriverMarker';
+import { syntheticCoord } from './mapPlacement';
 
 // ─── Try to load react-native-maps ────────────────────────────────────────────
 
@@ -116,33 +111,6 @@ function rangeToAltitude(rangeM: number): number {
   return Math.max(rangeM * 1.1, 450);
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function djb2(s: string): number {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) {
-    h = ((h * 33) ^ s.charCodeAt(i)) & 0x7fffffff;
-  }
-  return h;
-}
-
-/** Angle = user_id hash mod 360 (NOT true bearing); radius = server-rounded distance. */
-function syntheticCoord(
-  userLat: number,
-  userLng: number,
-  distanceM: number,
-  userId: string,
-): { latitude: number; longitude: number } {
-  const angleDeg = djb2(userId) % 360;
-  const angleRad = (angleDeg * Math.PI) / 180;
-  const latPerMetre = 1 / 111_320;
-  const lngPerMetre = 1 / (111_320 * Math.cos((userLat * Math.PI) / 180));
-  return {
-    latitude: userLat + distanceM * Math.cos(angleRad) * latPerMetre,
-    longitude: userLng + distanceM * Math.sin(angleRad) * lngPerMetre,
-  };
-}
-
 // ─── Dark map style (Android / Google Maps only — iOS uses userInterfaceStyle) ─
 
 const DARK_MAP_STYLE = [
@@ -186,91 +154,28 @@ const LABEL_CAP = 10;
 
 // ─── YouMarker ────────────────────────────────────────────────────────────────
 
+/** Your own position: vehicle in an accent ring, with a small "You" pill. */
 function YouMarker({ vehicleEmoji }: { vehicleEmoji: string | null }) {
-  const { accent } = useTheme();
+  const styles = useStyles();
   return (
-    <View style={youStyles.outer} pointerEvents="none">
-      <View style={[youStyles.label, { borderColor: accent.accent }]}>
-        <Text style={youStyles.labelText}>You</Text>
+    <View style={styles.youOuter} pointerEvents="none">
+      <View style={styles.youLabel}>
+        <Text style={styles.youLabelText} allowFontScaling={false}>
+          You
+        </Text>
       </View>
-      <View style={youStyles.stack}>
-        <View
-          style={[
-            youStyles.ringOuter,
-            { backgroundColor: accent.accentMuted, borderColor: accent.accent },
-          ]}
-        />
-        {vehicleEmoji !== null ? (
-          <View
-            style={[
-              youStyles.body,
-              { backgroundColor: accent.accentMuted, borderColor: accent.accent },
-            ]}
-          >
-            <Text style={youStyles.emoji}>{vehicleEmoji}</Text>
-          </View>
-        ) : (
-          <View style={[youStyles.dot, { backgroundColor: accent.accent }]} />
-        )}
-      </View>
+      {vehicleEmoji !== null ? (
+        <View style={styles.youBody}>
+          <Text style={styles.youEmoji} allowFontScaling={false}>
+            {vehicleEmoji}
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.youDot} />
+      )}
     </View>
   );
 }
-
-const youStyles = StyleSheet.create({
-  outer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  label: {
-    backgroundColor: 'rgba(10, 10, 20, 0.92)',
-    borderRadius: Radius.full,
-    borderWidth: 1,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 2,
-    marginBottom: 4,
-  },
-  labelText: {
-    fontSize: FontSize.micro,
-    fontWeight: FontWeight.bold,
-    color: '#fff',
-    letterSpacing: 0.4,
-  },
-  stack: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  ringOuter: {
-    position: 'absolute',
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(255, 107, 53, 0.18)',
-    borderWidth: 2,
-    borderColor: Colors.primary,
-  },
-  body: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    borderWidth: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emoji: {
-    fontSize: 18,
-  },
-  dot: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: Colors.primary,
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-});
 
 // ─── RealMapView ──────────────────────────────────────────────────────────────
 
@@ -284,6 +189,8 @@ interface RealMapProps {
   onMarkerPress: (driver: NearbyDriverCard) => void;
   recenterTick: number;
   onHeadingChange?: (deg: number) => void;
+  topInset: number;
+  bottomInset: number;
 }
 
 function RealMapView({
@@ -296,10 +203,12 @@ function RealMapView({
   onMarkerPress,
   recenterTick,
   onHeadingChange,
+  topInset,
+  bottomInset,
 }: RealMapProps) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<any>(null);
-  const { accent } = useTheme();
+  const { accent, scheme } = useTheme();
 
   // ── Refs read by the (stable) compass callback + imperative camera moves ────
   /** Current heading the camera is following. Survives fixes that lack one. */
@@ -420,8 +329,9 @@ function RealMapView({
       ref={mapRef}
       style={StyleSheet.absoluteFillObject}
       provider={undefined}
-      userInterfaceStyle="dark"
-      customMapStyle={Platform.OS === 'android' ? DARK_MAP_STYLE : undefined}
+      // Follows the app appearance (Apple Maps light/dark).
+      userInterfaceStyle={scheme}
+      customMapStyle={Platform.OS === 'android' && scheme === 'dark' ? DARK_MAP_STYLE : undefined}
       initialCamera={initialCamera}
       showsUserLocation={false}
       showsMyLocationButton={false}
@@ -438,15 +348,15 @@ function RealMapView({
       zoomEnabled={false}
       rotateEnabled={false}
       pitchEnabled={false}
-      mapPadding={{ top: 0, right: 0, bottom: 120, left: 0 }}
+      mapPadding={{ top: topInset, right: 0, bottom: bottomInset, left: 0 }}
     >
       {isLive && userCoords && (
         <Circle
           center={{ latitude: userCoords.lat, longitude: userCoords.lng }}
           radius={rangeM}
-          strokeColor={accent.accent}
-          strokeWidth={2}
-          fillColor={accent.accentMuted}
+          strokeColor={accent.fill}
+          strokeWidth={1.5}
+          fillColor={accent.muted}
         />
       )}
 
@@ -454,6 +364,7 @@ function RealMapView({
         <Marker
           coordinate={{ latitude: userCoords.lat, longitude: userCoords.lng }}
           anchor={{ x: 0.5, y: 0.5 }}
+          key={`you-${scheme}`}
           tracksViewChanges={false}
           // Upright billboard: never lies flat or spins with the map. As the
           // camera heading rotates, the "You" vehicle icon stays facing
@@ -481,11 +392,14 @@ function RealMapView({
             drivers.length <= LABEL_CAP || isSelected || isSpeaking;
           return (
             <Marker
-              key={d.user_id}
+              // Keyed by appearance so the marker bitmap is redrawn when
+              // light/dark changes (tracksViewChanges is off when idle).
+              key={`${d.user_id}-${scheme}`}
               coordinate={coord}
               anchor={{ x: 0.5, y: 0.5 }}
               tracksViewChanges={isSpeaking || isSelected}
               onPress={() => onMarkerPress(d)}
+              accessibilityLabel={isSpeaking ? 'Nearby driver, talking' : 'Nearby driver'}
               // Upright billboard — we have no reliable per-driver heading, so
               // their icons stay screen-upright rather than faking a direction.
               flat={false}
@@ -519,6 +433,9 @@ export interface NearbyMapProps {
   recenterTick?: number;
   /** Fired (rounded degrees) when the camera heading changes — drives the compass. */
   onHeadingChange?: (deg: number) => void;
+  /** Space covered by floating chrome, so "you" stays centred in what's visible. */
+  topInset?: number;
+  bottomInset?: number;
 }
 
 export function NearbyMap({
@@ -531,7 +448,10 @@ export function NearbyMap({
   onMarkerPress,
   recenterTick = 0,
   onHeadingChange,
+  topInset = 0,
+  bottomInset = 120,
 }: NearbyMapProps) {
+  const styles = useStyles();
   if (!maps) {
     return (
       <View style={styles.root}>
@@ -542,9 +462,6 @@ export function NearbyMap({
           isLive={isLive}
           onMarkerPress={onMarkerPress}
         />
-        <View style={styles.fallbackBadge} pointerEvents="none">
-          <Text style={styles.fallbackBadgeText}>Radar fallback</Text>
-        </View>
       </View>
     );
   }
@@ -561,80 +478,58 @@ export function NearbyMap({
         onMarkerPress={onMarkerPress}
         recenterTick={recenterTick}
         onHeadingChange={onHeadingChange}
+        topInset={topInset}
+        bottomInset={bottomInset}
       />
-
-      {userCoords === null && (
-        <View style={styles.locatingWrap} pointerEvents="none">
-          <View style={styles.locatingCard}>
-            <Text style={styles.locatingTitle}>Map ready</Text>
-            <Text style={styles.locatingBody}>
-              Tap Start RoadPing to share your live position and see nearby
-              drivers.
-            </Text>
-          </View>
-        </View>
-      )}
     </View>
   );
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((t) => ({
   root: {
     flex: 1,
-    backgroundColor: '#0c0c14',
+    backgroundColor: t.colors.background,
   },
-
-  locatingWrap: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+  youOuter: {
+    alignItems: 'center',
+  },
+  youLabel: {
+    backgroundColor: t.accent.fill,
+    borderRadius: Radius.full,
+    paddingHorizontal: 8,
+    paddingVertical: 1,
+    marginBottom: 3,
+  },
+  youLabelText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: t.accent.onFill,
+  },
+  youBody: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 3,
+    borderColor: t.accent.fill,
+    backgroundColor: t.colors.mapMarker,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: Spacing.xl,
+    shadowColor: t.colors.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: t.scheme === 'dark' ? 0.45 : 0.2,
+    shadowRadius: 4,
   },
-  locatingCard: {
-    backgroundColor: 'rgba(10, 10, 20, 0.78)',
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md,
-    gap: Spacing.xs,
-    maxWidth: 360,
+  youEmoji: {
+    fontSize: 20,
   },
-  locatingTitle: {
-    fontSize: FontSize.bodySmall,
-    fontWeight: FontWeight.semibold,
-    color: Colors.primary,
-    textAlign: 'center',
+  youDot: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 3,
+    borderColor: t.colors.mapMarker,
+    backgroundColor: t.accent.fill,
   },
-  locatingBody: {
-    fontSize: FontSize.caption,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: FontSize.caption * 1.5,
-  },
-
-  fallbackBadge: {
-    position: 'absolute',
-    top: 8,
-    alignSelf: 'center',
-    backgroundColor: 'rgba(255, 107, 53, 0.18)',
-    borderRadius: Radius.full,
-    paddingHorizontal: Spacing.md12,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: Colors.primary,
-  },
-  fallbackBadgeText: {
-    fontSize: FontSize.micro,
-    fontWeight: FontWeight.semibold,
-    color: Colors.primary,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
-});
+}));

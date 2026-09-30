@@ -1,16 +1,16 @@
 /**
- * EmptyState — full-area empty placeholder.
- * Used when a list or section has no content yet.
+ * EmptyState — what a list shows before it has anything in it.
+ * One symbol, one sentence of title, one of explanation, optional action.
  */
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { Colors } from '@/theme/colors';
-import { FontSize, FontWeight } from '@/theme/typography';
-import { Radius, Spacing } from '@/theme/spacing';
-import { AppButton } from './AppButton';
+import { View } from 'react-native';
+
+import { AppText, Button, Icon, type IconName } from '@/components/ui';
+import { makeStyles, useTheme } from '@/theme/ThemeProvider';
+import { Spacing } from '@/theme/spacing';
 
 interface EmptyStateProps {
-  icon?: string; // emoji
+  icon?: IconName;
   title: string;
   message?: string;
   actionLabel?: string;
@@ -26,69 +26,42 @@ export function EmptyState({
   onAction,
   fill = true,
 }: EmptyStateProps) {
+  const { colors } = useTheme();
+  const styles = useStyles();
   return (
     <View style={[styles.container, fill && styles.fill]}>
-      {icon != null && (
-        <View style={styles.iconBadge}>
-          <Text style={styles.icon}>{icon}</Text>
-        </View>
+      {icon !== undefined && <Icon name={icon} size={40} color={colors.textTertiary} weight="regular" />}
+      <AppText variant="title3" align="center" accessibilityRole="header">
+        {title}
+      </AppText>
+      {message !== undefined && (
+        <AppText variant="subheadline" color="secondary" align="center" style={styles.message}>
+          {message}
+        </AppText>
       )}
-      <Text style={styles.title}>{title}</Text>
-      {message != null && (
-        <Text style={styles.message}>{message}</Text>
-      )}
-      {actionLabel != null && onAction != null && (
-        <AppButton
-          label={actionLabel}
-          variant="ghost"
-          size="sm"
-          onPress={onAction}
-          style={styles.actionButton}
-        />
+      {actionLabel !== undefined && onAction !== undefined && (
+        <Button label={actionLabel} variant="secondary" size="sm" onPress={onAction} style={styles.action} />
       )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((t) => ({
   container: {
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.sm,
-    padding: Spacing.xl,
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.xl40,
   },
   fill: {
     flex: 1,
-    backgroundColor: Colors.background,
-  },
-  iconBadge: {
-    width: 76,
-    height: 76,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Spacing.sm,
-  },
-  icon: {
-    fontSize: 38,
-  },
-  title: {
-    fontSize: FontSize.subheading,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textPrimary,
-    textAlign: 'center',
+    backgroundColor: t.colors.background,
   },
   message: {
-    fontSize: FontSize.body,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: FontSize.body * 1.5,
-    maxWidth: 260,
+    maxWidth: 300,
   },
-  actionButton: {
+  action: {
     marginTop: Spacing.md,
   },
-});
+}));

@@ -12,24 +12,15 @@
  * the session, then redirect to /onboarding.
  */
 import React, { useState } from 'react';
-import {
-  Alert,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Alert, View } from 'react-native';
+import { Stack, useRouter } from 'expo-router';
 
-import { AppButton } from '@/components/AppButton';
-import { Colors } from '@/theme/colors';
-import { FontSize, FontWeight } from '@/theme/typography';
-import { Radius, Spacing } from '@/theme/spacing';
+import { AppText, Button, Icon, ListSection, Notice, ScreenScroll } from '@/components/ui';
 import { useAuth } from '@/hooks/useAuth';
 import { deleteAccount } from '@/services/account';
 import { stopLiveSession } from '@/services/liveSession';
+import { makeStyles, useTheme } from '@/theme/ThemeProvider';
+import { MIN_TOUCH_TARGET, SCREEN_INSET, Spacing } from '@/theme/spacing';
 
 const DELETED_ITEMS = [
   'Your profile, handle, and display name',
@@ -45,19 +36,37 @@ const RETAINED_ITEMS = [
   'Reports you filed are kept for safety review, but your identity as the reporter is removed (anonymized).',
 ] as const;
 
+function Bullet({ text, kept = false }: { text: string; kept?: boolean }) {
+  const { colors } = useTheme();
+  const styles = useStyles();
+  return (
+    <View style={styles.bullet}>
+      <Icon
+        name={kept ? 'info.circle.fill' : 'minus.circle.fill'}
+        size={18}
+        color={kept ? colors.textSecondary : colors.danger}
+      />
+      <AppText variant="body" style={styles.flex}>
+        {text}
+      </AppText>
+    </View>
+  );
+}
+
 export default function DeleteAccountScreen() {
   const router = useRouter();
+  const styles = useStyles();
   const { signOut } = useAuth();
   const [deleting, setDeleting] = useState(false);
 
   function handleConfirm() {
     Alert.alert(
-      'Delete account?',
+      'Delete your account?',
       'This permanently deletes your RoadPing account and cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete forever',
+          text: 'Delete Forever',
           style: 'destructive',
           onPress: () => {
             void runDelete();
@@ -86,196 +95,84 @@ export default function DeleteAccountScreen() {
         // Auth row already gone — token will be rejected anyway.
       }
       router.replace('/onboarding');
-    } catch (e) {
+    } catch {
       setDeleting(false);
       Alert.alert(
-        'Could not delete account',
-        'Something went wrong. Please check your connection and try again. ' +
-          'If this keeps happening, email support@roadping.app.',
+        "Couldn't delete your account",
+        'Please check your connection and try again. If this keeps happening, email support@roadping.app.',
       );
     }
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Pressable
-          onPress={() => router.back()}
-          hitSlop={12}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-          disabled={deleting}
-        >
-          <Text style={[styles.backBtn, deleting && styles.disabledText]}>
-            ‹ Back
-          </Text>
-        </Pressable>
-        <Text style={styles.title}>Delete account</Text>
-        <View style={styles.headerSpacer} />
-      </View>
-
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        showsVerticalScrollIndicator={false}
-      >
-        <Text style={styles.lead}>
+    <>
+      <Stack.Screen options={{ headerBackVisible: !deleting, gestureEnabled: !deleting }} />
+      <ScreenScroll>
+        <AppText variant="body" color="secondary" style={styles.lead}>
           You can permanently delete your RoadPing account at any time, right
-          here in the app. There is no need to email us first.
-        </Text>
+          here in the app. You don't need to email us first.
+        </AppText>
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>What gets deleted</Text>
+        <ListSection header="What gets deleted">
           {DELETED_ITEMS.map((item) => (
-            <View key={item} style={styles.bulletRow}>
-              <Text style={styles.bulletDot}>•</Text>
-              <Text style={styles.bulletText}>{item}</Text>
-            </View>
+            <Bullet key={item} text={item} />
           ))}
-        </View>
+        </ListSection>
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>What we keep</Text>
+        <ListSection header="What RoadPing keeps">
           {RETAINED_ITEMS.map((item) => (
-            <View key={item} style={styles.bulletRow}>
-              <Text style={styles.bulletDot}>•</Text>
-              <Text style={styles.bulletText}>{item}</Text>
-            </View>
+            <Bullet key={item} text={item} kept />
           ))}
-        </View>
-
-        <View style={styles.warningCard}>
-          <Text style={styles.warningTitle}>This cannot be undone</Text>
-          <Text style={styles.warningBody}>
-            Once you tap Delete forever, your account is removed immediately.
-            You will not be able to recover your handle, vehicles, or zones.
-          </Text>
-        </View>
+        </ListSection>
 
         <View style={styles.actions}>
-          <AppButton
-            label={deleting ? 'Deleting…' : 'Delete my account'}
-            variant="danger"
+          <Notice
+            tone="danger"
+            title="This can't be undone"
+            message="Your account is removed immediately. You won't be able to recover your handle, vehicles or zones."
+          />
+          <Button
+            label={deleting ? 'Deleting…' : 'Delete My Account'}
+            variant="destructive"
             size="lg"
             fullWidth
             loading={deleting}
             disabled={deleting}
             onPress={handleConfirm}
           />
-          <AppButton
+          <Button
             label="Cancel"
-            variant="ghost"
-            size="md"
+            variant="plain"
             fullWidth
             disabled={deleting}
             onPress={() => router.back()}
           />
+          <AppText variant="footnote" color="secondary" align="center">
+            Need help? Email support@roadping.app
+          </AppText>
         </View>
-
-        <Text style={styles.supportNote}>
-          Need help? Contact support@roadping.app
-        </Text>
-      </ScrollView>
-    </SafeAreaView>
+      </ScreenScroll>
+    </>
   );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  backBtn: {
-    fontSize: FontSize.body,
-    color: Colors.primary,
-    fontWeight: FontWeight.medium,
-    minWidth: 60,
-  },
-  disabledText: { opacity: 0.4 },
-  title: {
-    flex: 1,
-    fontSize: FontSize.body,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textPrimary,
-    textAlign: 'center',
-  },
-  headerSpacer: { minWidth: 60 },
-
-  scroll: {
-    paddingHorizontal: Spacing.md,
-    paddingTop: Spacing.lg,
-    paddingBottom: Spacing.xxl,
-    gap: Spacing.lg,
-  },
+const useStyles = makeStyles(() => ({
   lead: {
-    fontSize: FontSize.body,
-    color: Colors.textSecondary,
-    lineHeight: FontSize.body * 1.5,
+    paddingHorizontal: SCREEN_INSET,
   },
-
-  card: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.md,
-    gap: Spacing.sm,
-  },
-  cardTitle: {
-    fontSize: FontSize.bodySmall,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textTertiary,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  bulletRow: {
+  bullet: {
     flexDirection: 'row',
-    gap: Spacing.sm,
+    alignItems: 'flex-start',
+    gap: Spacing.md12,
+    minHeight: MIN_TOUCH_TARGET,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md12 - 2,
   },
-  bulletDot: {
-    fontSize: FontSize.body,
-    color: Colors.primary,
-    width: 12,
-  },
-  bulletText: {
+  flex: {
     flex: 1,
-    fontSize: FontSize.bodySmall,
-    color: Colors.textPrimary,
-    lineHeight: FontSize.bodySmall * 1.5,
   },
-
-  warningCard: {
-    backgroundColor: Colors.errorMuted,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.error,
-    padding: Spacing.md,
-    gap: Spacing.xs,
-  },
-  warningTitle: {
-    fontSize: FontSize.body,
-    fontWeight: FontWeight.semibold,
-    color: Colors.error,
-  },
-  warningBody: {
-    fontSize: FontSize.bodySmall,
-    color: Colors.textSecondary,
-    lineHeight: FontSize.bodySmall * 1.5,
-  },
-
   actions: {
-    gap: Spacing.sm,
+    paddingHorizontal: SCREEN_INSET,
+    gap: Spacing.md12,
   },
-
-  supportNote: {
-    fontSize: FontSize.caption,
-    color: Colors.textTertiary,
-    textAlign: 'center',
-  },
-});
+}));

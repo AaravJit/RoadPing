@@ -11,28 +11,16 @@
  * vehicle, tapping "Done" pops back to the route gate which forwards them on.
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { Redirect, useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ActionSheetIOS, Alert, Platform, Pressable, View } from 'react-native';
+import { Redirect, Stack, useRouter } from 'expo-router';
 
-import { AppButton } from '@/components/AppButton';
-import { AppInput } from '@/components/AppInput';
-import { SelectField, type SelectOption } from '@/components/SelectField';
-import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
+import { LoadingState } from '@/components/LoadingState';
+import { SelectField, type SelectOption } from '@/components/SelectField';
 import { VehicleCard } from '@/components/VehicleCard';
-import { Colors } from '@/theme/colors';
-import { FontSize, FontWeight, TextStyles } from '@/theme/typography';
-import { Radius, Spacing } from '@/theme/spacing';
+import { AppText, Button, Notice, ScreenBackground, ScreenScroll, TextField, haptic } from '@/components/ui';
+import { makeStyles, useTheme } from '@/theme/ThemeProvider';
+import { MIN_TOUCH_TARGET, Radius, SCREEN_INSET, Spacing } from '@/theme/spacing';
 import { useAuth } from '@/hooks/useAuth';
 import { useVehicles } from '@/hooks/useVehicles';
 import type { VehicleRow } from '@/services/types';
@@ -156,6 +144,8 @@ function fromVehicle(v: VehicleRow): FormState {
 
 export default function VehicleScreen() {
   const router = useRouter();
+  const styles = useStyles();
+  const { colors, accent } = useTheme();
   const { user, isLoading: authLoading } = useAuth();
   const {
     vehicles,
@@ -206,13 +196,15 @@ export default function VehicleScreen() {
   }
   if (vehiclesError !== null && !hasLoaded) {
     return (
-      <ErrorState
-        title="Couldn't load vehicles"
-        message={vehiclesError}
-        onRetry={() => {
-          void refresh();
-        }}
-      />
+      <ScreenBackground>
+        <ErrorState
+          title="Couldn't load vehicles"
+          message={vehiclesError}
+          onRetry={() => {
+            void refresh();
+          }}
+        />
+      </ScreenBackground>
     );
   }
 
@@ -345,8 +337,8 @@ export default function VehicleScreen() {
   // ── Per-card actions ────────────────────────────────────────────────────
   function handleDelete(v: VehicleRow) {
     Alert.alert(
-      'Delete vehicle?',
-      `Remove ${v.label} from your vehicles?`,
+      `Delete ${v.label}?`,
+      'It will be removed from your vehicles.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -360,7 +352,7 @@ export default function VehicleScreen() {
                 await deleteVehicle(v.id, user.id);
                 await refresh();
               } catch (err) {
-                Alert.alert('Delete failed', friendlyVehicleError(err));
+                Alert.alert("Couldn't delete vehicle", friendlyVehicleError(err));
               } finally {
                 setActingOnId(null);
               }
@@ -384,6 +376,35 @@ export default function VehicleScreen() {
     }
   }
 
+  function openVehicleActions(v: VehicleRow) {
+    const options = ['Edit', ...(v.is_active ? [] : ['Make Primary']), 'Delete Vehicle', 'Cancel'];
+    const run = (label: string | undefined) => {
+      if (label === 'Edit') openEditForm(v);
+      if (label === 'Make Primary') void handleSetPrimary(v);
+      if (label === 'Delete Vehicle') handleDelete(v);
+    };
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          title: v.label,
+          options,
+          cancelButtonIndex: options.length - 1,
+          destructiveButtonIndex: options.length - 2,
+        },
+        (i) => run(options[i]),
+      );
+      return;
+    }
+    Alert.alert(v.label, undefined, [
+      ...options.slice(0, -1).map((text) => ({
+        text,
+        style: text === 'Delete Vehicle' ? ('destructive' as const) : ('default' as const),
+        onPress: () => run(text),
+      })),
+      { text: 'Cancel', style: 'cancel' as const },
+    ]);
+  }
+
   function handleDone() {
     // Route gate in app/index.tsx forwards on once a vehicle exists.
     router.replace('/');
@@ -391,300 +412,207 @@ export default function VehicleScreen() {
 
   // ─── Render: form mode ──────────────────────────────────────────────────
   if (mode.kind === 'form') {
+    const formTitle =
+      editingVehicle !== null ? 'Edit Vehicle' : isInitialSetup ? 'Your vehicle' : 'Add Vehicle';
     return (
-      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-        <KeyboardAvoidingView
-          style={styles.kav}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          <ScrollView
-            contentContainerStyle={styles.scroll}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            <View style={styles.header}>
-              {isInitialSetup && editingVehicle === null && (
-                <View style={styles.stepBadge}>
-                  <Text style={styles.stepBadgeText}>STEP 2 OF 2</Text>
-                </View>
-              )}
-              <Text style={styles.title}>
-                {editingVehicle !== null
-                  ? 'Edit vehicle'
-                  : isInitialSetup
-                    ? 'Add your first vehicle'
-                    : 'Add a vehicle'}
-              </Text>
-              <Text style={styles.subtitle}>
-                Drivers nearby will see your vehicle’s make, model and color
-                while you’re live.
-              </Text>
-            </View>
+      <ScreenScroll>
+        <Stack.Screen options={{ headerShown: !isInitialSetup, title: formTitle }} />
 
-            {/* ── Details ────────────────────────────────────────────── */}
-            <View style={styles.section}>
-              <Text style={styles.sectionLabel}>Details</Text>
+        {isInitialSetup && editingVehicle === null && (
+          <View style={styles.intro}>
+            <AppText variant="footnote" color="secondary" weight="medium">
+              Step 2 of 2
+            </AppText>
+            <AppText variant="largeTitle" weight="bold" accessibilityRole="header">
+              Your vehicle
+            </AppText>
+          </View>
+        )}
+        <AppText variant="body" color="secondary" style={styles.inset}>
+          Nearby drivers see your vehicle&apos;s make, model and color while you&apos;re live.
+        </AppText>
 
-              <SelectField
-                label="Make"
-                value={form.make.length > 0 ? form.make : null}
-                options={makeOptions}
-                placeholder="Select make"
-                searchable
-                onChange={applyMake}
-                error={fieldErrors.make}
-              />
+        <View style={styles.fields}>
+          <SelectField
+            label="Make"
+            value={form.make.length > 0 ? form.make : null}
+            options={makeOptions}
+            placeholder="Select make"
+            searchable
+            onChange={applyMake}
+            error={fieldErrors.make}
+          />
 
-              {showModelDropdown ? (
-                <SelectField
-                  label="Model"
-                  value={form.model.length > 0 ? form.model : null}
-                  options={modelOptions}
-                  placeholder="Select model"
-                  searchable
-                  onChange={applyModelSelect}
-                  error={fieldErrors.model}
-                />
-              ) : (
-                <AppInput
-                  label="Model"
-                  placeholder="e.g. Civic"
-                  value={form.model}
-                  onChangeText={applyModelText}
-                  error={fieldErrors.model}
-                  autoCapitalize="words"
-                  maxLength={80}
-                  returnKeyType="next"
-                />
-              )}
+          {showModelDropdown ? (
+            <SelectField
+              label="Model"
+              value={form.model.length > 0 ? form.model : null}
+              options={modelOptions}
+              placeholder="Select model"
+              searchable
+              onChange={applyModelSelect}
+              error={fieldErrors.model}
+            />
+          ) : (
+            <TextField
+              label="Model"
+              placeholder="e.g. Civic"
+              value={form.model}
+              onChangeText={applyModelText}
+              error={fieldErrors.model}
+              autoCapitalize="words"
+              maxLength={80}
+              returnKeyType="next"
+            />
+          )}
 
-              <SelectField
-                label="Year"
-                value={form.year.length > 0 ? form.year : null}
-                options={YEAR_OPTIONS}
-                placeholder="Select year"
-                searchable
-                onChange={(v) => setForm({ ...form, year: v })}
-                error={fieldErrors.year}
-              />
+          <SelectField
+            label="Year"
+            value={form.year.length > 0 ? form.year : null}
+            options={YEAR_OPTIONS}
+            placeholder="Select year"
+            searchable
+            onChange={(v) => setForm({ ...form, year: v })}
+            error={fieldErrors.year}
+          />
 
-              <SelectField
-                label="Color"
-                value={form.color.length > 0 ? form.color : null}
-                options={COLOR_OPTIONS}
-                placeholder="Select color"
-                onChange={(v) => setForm({ ...form, color: v })}
-                error={fieldErrors.color}
-              />
-            </View>
+          <SelectField
+            label="Color"
+            value={form.color.length > 0 ? form.color : null}
+            options={COLOR_OPTIONS}
+            placeholder="Select color"
+            onChange={(v) => setForm({ ...form, color: v })}
+            error={fieldErrors.color}
+          />
+        </View>
 
-            {/* ── Body type chips ────────────────────────────────────── */}
-            <View style={styles.section}>
-              <Text style={styles.sectionLabel}>Body type</Text>
-              <Text style={styles.sectionHint}>
-                {bodyTypeInferred
-                  ? 'Picked from your model — tap to change.'
-                  : 'Sets the icon shown on the live map.'}
-              </Text>
-              <View style={styles.chipRow} accessibilityRole="radiogroup">
-                {BODY_TYPE_OPTIONS.map((opt) => {
-                  const selected = form.bodyType === opt.value;
-                  return (
-                    <Pressable
-                      key={opt.value}
-                      style={[styles.chip, selected && styles.chipActive]}
-                      onPress={() =>
-                        setForm({ ...form, bodyType: opt.value })
-                      }
-                      accessibilityRole="radio"
-                      accessibilityState={{ selected }}
-                      accessibilityLabel={opt.label}
-                    >
-                      <Text style={styles.chipEmoji}>{opt.emoji}</Text>
-                      <Text
-                        style={[
-                          styles.chipLabel,
-                          selected && styles.chipLabelActive,
-                        ]}
-                      >
-                        {opt.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-              {fieldErrors.bodyType !== undefined && (
-                <Text style={styles.fieldError}>{fieldErrors.bodyType}</Text>
-              )}
-            </View>
+        <View style={styles.fields}>
+          <View style={styles.labelRow}>
+            <AppText variant="footnote" color="secondary" weight="medium">
+              Body type
+            </AppText>
+            <AppText variant="footnote" color="tertiary">
+              {bodyTypeInferred ? 'Picked from your model' : 'Sets your map icon'}
+            </AppText>
+          </View>
+          <View style={styles.chipRow} accessibilityRole="radiogroup" accessibilityLabel="Body type">
+            {BODY_TYPE_OPTIONS.map((opt) => {
+              const selected = form.bodyType === opt.value;
+              return (
+                <Pressable
+                  key={opt.value}
+                  style={[
+                    styles.chip,
+                    selected && { backgroundColor: accent.muted, borderColor: accent.fill },
+                  ]}
+                  onPress={() => {
+                    haptic.selection();
+                    setForm({ ...form, bodyType: opt.value });
+                  }}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={opt.label}
+                >
+                  <AppText variant="body" maxScale={1.2}>
+                    {opt.emoji}
+                  </AppText>
+                  <AppText
+                    variant="subheadline"
+                    weight={selected ? 'semibold' : 'medium'}
+                    style={{ color: selected ? accent.text : colors.textPrimary }}
+                  >
+                    {opt.label}
+                  </AppText>
+                </Pressable>
+              );
+            })}
+          </View>
+          {fieldErrors.bodyType !== undefined && (
+            <AppText variant="footnote" color="danger" accessibilityRole="alert">
+              {fieldErrors.bodyType}
+            </AppText>
+          )}
+        </View>
 
-            {/* ── Auto-generated label preview ───────────────────────── */}
-            {form.make.trim().length > 0 && form.model.trim().length > 0 && (
-              <View style={styles.previewBox}>
-                <Text style={styles.previewLabel}>SHOWN TO NEARBY DRIVERS AS</Text>
-                <Text style={styles.previewValue}>
-                  {generateVehicleLabel({
-                    year: form.year.length > 0 ? Number(form.year) : null,
-                    make: form.make,
-                    model: form.model,
-                    color: form.color,
-                  })}
-                </Text>
-              </View>
-            )}
+        {form.make.trim().length > 0 && form.model.trim().length > 0 && (
+          <View style={styles.inset}>
+            <Notice
+              icon="eye.fill"
+              title="Nearby drivers will see"
+              message={generateVehicleLabel({
+                year: form.year.length > 0 ? Number(form.year) : null,
+                make: form.make,
+                model: form.model,
+                color: form.color,
+              })}
+            />
+          </View>
+        )}
 
-            {/* ── Save error ─────────────────────────────────────────── */}
-            {saveError !== null && (
-              <View style={styles.errorBanner} accessibilityRole="alert">
-                <Text style={styles.errorBannerText}>{saveError}</Text>
-              </View>
-            )}
-
-            {/* ── Actions ────────────────────────────────────────────── */}
-            <View style={styles.actions}>
-              <AppButton
-                label={editingVehicle !== null ? 'Save changes' : 'Add vehicle'}
-                variant="primary"
-                size="lg"
-                fullWidth
-                loading={saving}
-                onPress={handleSave}
-              />
-              {vehicles.length > 0 && (
-                <AppButton
-                  label="Cancel"
-                  variant="ghost"
-                  size="md"
-                  fullWidth
-                  disabled={saving}
-                  onPress={closeForm}
-                />
-              )}
-            </View>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
+        <View style={styles.actions}>
+          {saveError !== null && <Notice tone="danger" title="Couldn't save" message={saveError} />}
+          <Button
+            label={editingVehicle !== null ? 'Save' : 'Add Vehicle'}
+            size="lg"
+            fullWidth
+            loading={saving}
+            onPress={() => void handleSave()}
+          />
+          {vehicles.length > 0 && (
+            <Button label="Cancel" variant="plain" fullWidth disabled={saving} onPress={closeForm} />
+          )}
+        </View>
+      </ScreenScroll>
     );
   }
 
   // ─── Render: list mode ─────────────────────────────────────────────────
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.header}>
-          <Text style={styles.title}>Your vehicles</Text>
-          <Text style={styles.subtitle}>
-            Your primary vehicle is shown to nearby drivers when you go live.
-          </Text>
-        </View>
+    <ScreenScroll>
+      <Stack.Screen options={{ headerShown: true, title: 'Vehicles' }} />
+      <AppText variant="footnote" color="secondary" style={styles.inset}>
+        Your primary vehicle is what nearby drivers see when you go live. Tap a
+        vehicle for options.
+      </AppText>
 
-        <View style={styles.list}>
-          {vehicles.map((v) => (
-            <VehicleCard
-              key={v.id}
-              vehicle={v}
-              busy={actingOnId === v.id}
-              onEdit={() => openEditForm(v)}
-              onDelete={() => handleDelete(v)}
-              onSetPrimary={
-                v.is_active
-                  ? undefined
-                  : () => {
-                      void handleSetPrimary(v);
-                    }
-              }
-            />
-          ))}
-        </View>
+      <View style={styles.cards}>
+        {vehicles.map((v) => (
+          <VehicleCard
+            key={v.id}
+            vehicle={v}
+            busy={actingOnId === v.id}
+            onPress={() => openVehicleActions(v)}
+          />
+        ))}
+      </View>
 
-        <View style={styles.actions}>
-          <AppButton
-            label="+ Add another vehicle"
-            variant="secondary"
-            size="md"
-            fullWidth
-            onPress={openAddForm}
-          />
-          <AppButton
-            label="Done"
-            variant="primary"
-            size="lg"
-            fullWidth
-            onPress={handleDone}
-          />
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+      <View style={styles.actions}>
+        <Button label="Add Vehicle" icon="plus" variant="secondary" fullWidth onPress={openAddForm} />
+        {!router.canGoBack() && <Button label="Done" size="lg" fullWidth onPress={handleDone} />}
+      </View>
+    </ScreenScroll>
   );
 }
 
-// ─── Styles ──────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: Colors.background,
+const useStyles = makeStyles((t) => ({
+  intro: {
+    paddingHorizontal: SCREEN_INSET,
+    gap: Spacing.xs,
   },
-  kav: {
-    flex: 1,
+  inset: {
+    paddingHorizontal: SCREEN_INSET,
   },
-  scroll: {
-    paddingHorizontal: Spacing.md,
-    paddingTop: Spacing.xl,
-    paddingBottom: Spacing.xxl,
-    gap: Spacing.xl,
-    flexGrow: 1,
-  },
-
-  header: {
-    gap: Spacing.sm,
-  },
-  stepBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: Colors.primaryMuted,
-    borderWidth: 1,
-    borderColor: Colors.primary,
-    borderRadius: Radius.full,
-    paddingHorizontal: Spacing.md12,
-    paddingVertical: Spacing.xs,
-    marginBottom: Spacing.xs,
-  },
-  stepBadgeText: {
-    fontSize: FontSize.micro,
-    fontWeight: FontWeight.bold,
-    color: Colors.primary,
-    letterSpacing: 1,
-  },
-  title: {
-    ...TextStyles.headingLarge,
-    color: Colors.textPrimary,
-  },
-  subtitle: {
-    ...TextStyles.body,
-    color: Colors.textSecondary,
-  },
-
-  section: {
+  fields: {
+    paddingHorizontal: SCREEN_INSET,
     gap: Spacing.md,
   },
-  sectionLabel: {
-    fontSize: FontSize.label,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textTertiary,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
+  labelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    gap: Spacing.sm,
+    marginBottom: -Spacing.xs,
   },
-  sectionHint: {
-    fontSize: FontSize.caption,
-    color: Colors.textTertiary,
-    marginTop: -Spacing.sm,
-    lineHeight: FontSize.caption * 1.4,
-  },
-
-  // Body-type chip row
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -693,76 +621,20 @@ const styles = StyleSheet.create({
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.xs,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md12,
+    gap: 6,
+    minHeight: MIN_TOUCH_TARGET,
+    paddingHorizontal: Spacing.md12 + 2,
     borderRadius: Radius.full,
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+    backgroundColor: t.colors.surface,
   },
-  chipActive: {
-    backgroundColor: Colors.primaryMuted,
-    borderColor: Colors.primary,
-  },
-  chipEmoji: {
-    fontSize: FontSize.body,
-  },
-  chipLabel: {
-    fontSize: FontSize.bodySmall,
-    fontWeight: FontWeight.medium,
-    color: Colors.textSecondary,
-  },
-  chipLabelActive: {
-    color: Colors.primary,
-    fontWeight: FontWeight.semibold,
-  },
-  fieldError: {
-    fontSize: FontSize.caption,
-    color: Colors.error,
-  },
-
-  // Auto-label preview
-  previewBox: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.md,
-    gap: Spacing.xs,
-  },
-  previewLabel: {
-    fontSize: FontSize.micro,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textTertiary,
-    letterSpacing: 1,
-  },
-  previewValue: {
-    fontSize: FontSize.bodyLarge,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textPrimary,
-  },
-
-  // Banners + actions
-  errorBanner: {
-    backgroundColor: Colors.errorMuted,
-    borderRadius: Radius.sm,
-    borderWidth: 1,
-    borderColor: Colors.error,
-    padding: Spacing.md,
-  },
-  errorBannerText: {
-    fontSize: FontSize.bodySmall,
-    color: Colors.error,
-    textAlign: 'center',
-  },
-
-  // List mode
-  list: {
+  cards: {
+    paddingHorizontal: SCREEN_INSET,
     gap: Spacing.md,
   },
-
   actions: {
+    paddingHorizontal: SCREEN_INSET,
     gap: Spacing.sm,
   },
-});
+}));

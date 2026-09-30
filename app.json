@@ -10,7 +10,7 @@
       "resizeMode": "contain",
       "backgroundColor": "#0A0A0A"
     },
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "automatic",
     "scheme": "roadping",
     "platforms": [
       "ios"
@@ -24,7 +24,7 @@
       },
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSLocationWhenInUseUsageDescription": "RoadPing uses your location while active to show nearby live drivers and let you appear on the live map after you tap Start RoadPing. Your exact coordinates are never shared and no location history is stored.",
+        "NSLocationWhenInUseUsageDescription": "RoadPing uses your location while active to show nearby live drivers and let you appear on the live map after you tap Go Live. Your exact coordinates are never shared and no location history is stored.",
         "NSMicrophoneUsageDescription": "RoadPing uses your microphone when you hold to talk to nearby drivers or room members. Voice is live only and not recorded or stored.",
         "NSCameraUsageDescription": "RoadPing uses your camera only when you choose to take a profile photo. RoadPing does not record video.",
         "NSPhotoLibraryUsageDescription": "RoadPing accesses your photo library only when you choose a profile photo. RoadPing never browses or uploads anything else."
@@ -35,7 +35,7 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "RoadPing uses your location while active to show nearby live drivers and let you appear on the live map after you tap Start RoadPing.",
+          "locationWhenInUsePermission": "RoadPing uses your location while active to show nearby live drivers and let you appear on the live map after you tap Go Live.",
           "isIosBackgroundLocationEnabled": false
         }
       ],

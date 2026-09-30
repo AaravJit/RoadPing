@@ -14,28 +14,26 @@
  *  - Owner cannot leave while other members are present.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  Alert,
-  Pressable,
-  ScrollView,
-  Share,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ActionSheetIOS, Alert, Linking, Platform, Pressable, ScrollView, Share, View } from 'react-native';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { AppButton } from '@/components/AppButton';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
 import { HoldToTalkButton } from '@/components/HoldToTalkButton';
 import { LoadingState } from '@/components/LoadingState';
-import { ReportModal } from '@/components/ReportModal';
-import { RoomMemberCard } from '@/components/RoomMemberCard';
-import { Colors } from '@/theme/colors';
-import { FontSize, FontWeight } from '@/theme/typography';
-import { Radius, Spacing } from '@/theme/spacing';
+import { ReportModal, type ReportTarget } from '@/components/ReportModal';
+import { SpeakingWave } from '@/components/SpeakingWave';
+import { personName, vehicleDescription, vehicleEmoji } from '@/components/identity';
+import {
+  AppText,
+  Avatar,
+  Icon,
+  ListRow,
+  ListSection,
+  Notice,
+  ScreenBackground,
+} from '@/components/ui';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useHoldToTalk } from '@/hooks/useHoldToTalk';
@@ -46,13 +44,8 @@ import { subscribeToSpeakingState } from '@/services/voice';
 import { agoraUidForUser, setRemoteSpeakingListener } from '@/services/agoraVoice';
 import type { RoomMember } from '@/services/api';
 import type { RoomRow } from '@/services/types';
-
-// Adapted from NearbyDriverCard shape for ReportModal compatibility.
-type ReportTarget = {
-  user_id: string;
-  display_name: string;
-  handle: string | null;
-};
+import { makeStyles, useTheme } from '@/theme/ThemeProvider';
+import { MIN_TOUCH_TARGET, SCREEN_INSET, Spacing } from '@/theme/spacing';
 
 const POLL_INTERVAL_MS = 3_000;
 
@@ -60,6 +53,9 @@ const POLL_INTERVAL_MS = 3_000;
 
 export default function RoomScreen() {
   const router = useRouter();
+  const styles = useStyles();
+  const insets = useSafeAreaInsets();
+  const { colors, accent } = useTheme();
   const { roomId } = useLocalSearchParams<{ roomId: string }>();
   const { user } = useAuth();
   const { profile } = useProfile(user?.id ?? null);
@@ -195,10 +191,10 @@ export default function RoomScreen() {
   }
 
   function handleBlock(member: RoomMember) {
-    const label = member.handle !== null ? `@${member.handle}` : member.display_name ?? 'this driver';
+    const label = personName(member);
     Alert.alert(
-      'Block driver?',
-      `You and ${label} will become invisible to each other.`,
+      `Block ${label}?`,
+      "You won't see each other on RoadPing. They won't be told.",
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -211,9 +207,9 @@ export default function RoomScreen() {
                 setMembers((prev) =>
                   prev.filter((m) => m.user_id !== member.user_id),
                 );
-                Alert.alert('Blocked', "You won't see each other anymore.");
+                Alert.alert('Blocked', `You won't see ${label} anymore.`);
               } catch {
-                Alert.alert('Block failed', 'Please try again.');
+                Alert.alert("Couldn't block", 'Please try again.');
               }
             })();
           },
@@ -225,7 +221,7 @@ export default function RoomScreen() {
   function handleReport(member: RoomMember) {
     setReportTarget({
       user_id: member.user_id,
-      display_name: member.display_name ?? 'Unknown',
+      display_name: member.display_name,
       handle: member.handle,
     });
   }
@@ -236,8 +232,8 @@ export default function RoomScreen() {
 
     if (isOwner) {
       Alert.alert(
-        'Delete room?',
-        `"${room.name}" and all members will be removed permanently.`,
+        `Delete "${room.name}"?`,
+        'The room and its member list are removed for everyone. This can\'t be undone.',
         [
           { text: 'Cancel', style: 'cancel' },
           {
@@ -251,7 +247,7 @@ export default function RoomScreen() {
                   router.back();
                 } catch (e) {
                   Alert.alert(
-                    'Delete failed',
+                    "Couldn't delete room",
                     e instanceof Error ? e.message : 'Please try again.',
                   );
                   setLeaving(false);
@@ -262,7 +258,7 @@ export default function RoomScreen() {
         ],
       );
     } else {
-      Alert.alert('Leave room?', `You will no longer be a member of "${room.name}".`, [
+      Alert.alert(`Leave "${room.name}"?`, 'You can rejoin later with the invite code.', [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Leave',
@@ -275,7 +271,7 @@ export default function RoomScreen() {
                 router.back();
               } catch (e) {
                 Alert.alert(
-                  'Leave failed',
+                  "Couldn't leave room",
                   e instanceof Error ? e.message : 'Please try again.',
                 );
                 setLeaving(false);
@@ -287,277 +283,247 @@ export default function RoomScreen() {
     }
   }
 
-  // ── ReportModal shim (ReportModal expects NearbyDriverCard shape) ──────────
-  const reportModalDriver = reportTarget !== null
-    ? {
-        user_id: reportTarget.user_id,
-        display_name: reportTarget.display_name,
-        handle: reportTarget.handle,
-        avatar_url: null,
-        vehicle_type: null,
-        vehicle_label: null,
-        vehicle_color: null,
-        vehicle_make: null,
-        vehicle_model: null,
-        approximate_distance_m: 0,
-        is_speaking: false,
-        session_id: '',
-        dnd: false,
-      }
-    : null;
+  function openMemberActions(member: RoomMember) {
+    const name = personName(member);
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          title: name,
+          options: ['Report', 'Block', 'Cancel'],
+          destructiveButtonIndex: 1,
+          cancelButtonIndex: 2,
+        },
+        (i) => {
+          if (i === 0) handleReport(member);
+          if (i === 1) handleBlock(member);
+        },
+      );
+      return;
+    }
+    Alert.alert(name, undefined, [
+      { text: 'Report', onPress: () => handleReport(member) },
+      { text: 'Block', style: 'destructive', onPress: () => handleBlock(member) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }
+
+  function openRoomMenu() {
+    if (room === null) return;
+    const isOwnerNow = user !== null && room.owner_id === user.id;
+    const hasCode = room.invite_code != null;
+    const options = [
+      ...(hasCode ? ['Share Invite Code'] : []),
+      isOwnerNow ? 'Delete Room' : 'Leave Room',
+      'Cancel',
+    ];
+    const destructiveIndex = hasCode ? 1 : 0;
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options, destructiveButtonIndex: destructiveIndex, cancelButtonIndex: options.length - 1 },
+        (i) => {
+          if (hasCode && i === 0) void handleShareCode();
+          if (i === destructiveIndex) handleLeaveOrDelete();
+        },
+      );
+      return;
+    }
+    Alert.alert(room.name, undefined, [
+      ...(hasCode ? [{ text: 'Share Invite Code', onPress: () => void handleShareCode() }] : []),
+      { text: options[destructiveIndex] ?? 'Leave Room', style: 'destructive' as const, onPress: handleLeaveOrDelete },
+      { text: 'Cancel', style: 'cancel' as const },
+    ]);
+  }
 
   // ─── Render ─────────────────────────────────────────────────────────────
 
   if (roomLoading) return <LoadingState message="Loading room…" />;
   if (roomError !== null) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+      <ScreenBackground>
+        <Stack.Screen options={{ title: 'Room' }} />
         <ErrorState title="Room unavailable" message={roomError} />
-      </SafeAreaView>
+      </ScreenBackground>
     );
   }
 
-  const isOwner = room !== null && user !== null && room.owner_id === user.id;
+  const headerRight = () => (
+    <Pressable
+      onPress={openRoomMenu}
+      disabled={leaving}
+      hitSlop={8}
+      style={styles.headerBtn}
+      accessibilityRole="button"
+      accessibilityLabel="Room options"
+    >
+      <Icon name="ellipsis" size={20} color={accent.text} weight="semibold" />
+    </Pressable>
+  );
+
+  const memberCountLabel = `${members.length} ${members.length === 1 ? 'member' : 'members'}`;
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      {/* ── Header ──────────────────────────────────────────────────────── */}
-      <View style={styles.header}>
-        <Pressable
-          onPress={() => router.back()}
-          hitSlop={12}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Text style={styles.backBtn}>‹ Back</Text>
-        </Pressable>
+    <ScreenBackground>
+      <Stack.Screen options={{ title: room?.name ?? 'Room', headerRight }} />
 
-        <View style={styles.headerCenter}>
-          <Text style={styles.roomName} numberOfLines={1}>
-            {room?.name ?? '…'}
-          </Text>
-          <Text style={styles.memberCount}>
-            {members.length} {members.length === 1 ? 'member' : 'members'}
-          </Text>
-        </View>
-
-        <AppButton
-          label={leaving ? '…' : isOwner ? 'Delete' : 'Leave'}
-          variant="danger"
-          size="sm"
-          loading={leaving}
-          disabled={leaving}
-          onPress={handleLeaveOrDelete}
-        />
-      </View>
-
-      {/* ── Invite code bar ─────────────────────────────────────────────── */}
-      {room?.invite_code != null && (
-        <Pressable
-          style={styles.codeBar}
-          onPress={() => {
-            void handleShareCode();
-          }}
-          accessibilityRole="button"
-          accessibilityLabel={`Share invite code ${room.invite_code}`}
-        >
-          <Text style={styles.codeBarLabel}>Invite code</Text>
-          <Text style={styles.codeBarCode}>{room.invite_code}</Text>
-          <Text style={styles.codeBarShare}>Tap to share ↗</Text>
-        </Pressable>
-      )}
-
-      {/* ── Member list ─────────────────────────────────────────────────── */}
-      {membersLoading ? (
-        <LoadingState message="Loading members…" />
-      ) : membersError !== null ? (
-        <ErrorState
-          title="Couldn't load members"
-          message={membersError}
-          onRetry={() => {
-            void fetchMembers();
-          }}
-        />
-      ) : members.length === 0 ? (
-        <EmptyState icon="🚗" title="No members" message="The room appears empty." />
-      ) : (
-        <ScrollView
-          contentContainerStyle={styles.memberList}
-          showsVerticalScrollIndicator={false}
-        >
-          {members.map((m) => (
-            <RoomMemberCard
-              key={m.user_id}
-              member={
-                agoraSpeaking.has(m.user_id)
-                  ? { ...m, is_speaking: true }
-                  : m
-              }
-              isSelf={m.user_id === user?.id}
-              onBlock={m.user_id !== user?.id ? () => handleBlock(m) : undefined}
-              onReport={m.user_id !== user?.id ? () => handleReport(m) : undefined}
+      <ScrollView
+        style={styles.flex}
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={styles.scroll}
+      >
+        {room?.invite_code != null && (
+          <ListSection footer="Anyone with this code can join. Rooms are private and have no text chat.">
+            <ListRow
+              icon="square.and.arrow.up"
+              iconTone="accent"
+              title="Invite code"
+              value={room.invite_code}
+              onPress={() => void handleShareCode()}
+              accessibilityLabel={`Invite code ${room.invite_code.split('').join(' ')}. Share`}
             />
-          ))}
-        </ScrollView>
-      )}
+          </ListSection>
+        )}
 
-      {/* ── PTT zone ────────────────────────────────────────────────────── */}
-      <View style={styles.pttZone}>
+        {membersLoading ? (
+          <LoadingState fill={false} message="Loading members…" />
+        ) : membersError !== null ? (
+          <ErrorState
+            fill={false}
+            title="Couldn't load members"
+            message={membersError}
+            onRetry={() => void fetchMembers()}
+          />
+        ) : members.length === 0 ? (
+          <EmptyState fill={false} icon="person.3.fill" title="No one here yet" message="Share the invite code to bring people in." />
+        ) : (
+          <ListSection header={memberCountLabel}>
+            {members.map((raw) => {
+              const m = agoraSpeaking.has(raw.user_id) ? { ...raw, is_speaking: true } : raw;
+              const self = m.user_id === user?.id;
+              const name = personName(m);
+              const vehicle = `${vehicleEmoji(m.vehicle_type)} ${vehicleDescription(m)}`;
+              const tags = [self ? 'You' : null, m.is_moderator ? 'Moderator' : null]
+                .filter(Boolean)
+                .join(' · ');
+              return (
+                <ListRow
+                  key={m.user_id}
+                  title={name}
+                  subtitle={vehicle}
+                  leading={
+                    <Avatar name={name} uri={m.avatar_url} size={40} ring={m.is_speaking ? 'live' : undefined} self={self} />
+                  }
+                  trailing={
+                    m.is_speaking ? (
+                      <View style={styles.talking}>
+                        <SpeakingWave active size={12} />
+                        <AppText variant="footnote" weight="semibold" color="live">
+                          Talking
+                        </AppText>
+                      </View>
+                    ) : tags.length > 0 ? (
+                      <AppText variant="footnote" color="secondary">
+                        {tags}
+                      </AppText>
+                    ) : undefined
+                  }
+                  onPress={self ? undefined : () => openMemberActions(m)}
+                  accessibilityLabel={`${name}${tags ? `, ${tags}` : ''}, ${vehicleDescription(m)}${m.is_speaking ? ', talking' : ''}`}
+                  accessibilityHint={self ? undefined : 'Report or block'}
+                />
+              );
+            })}
+          </ListSection>
+        )}
+      </ScrollView>
+
+      <View style={[styles.talkBar, { paddingBottom: Math.max(insets.bottom, Spacing.md) }]}>
         {liveSessionId === null ? (
-          <View style={styles.notLiveBanner}>
-            <Text style={styles.notLiveText}>
-              🎙 Start RoadPing from the Drive screen to use Hold to Talk
-            </Text>
-          </View>
+          <Notice
+            icon="mic.slash.fill"
+            title="Go live to talk"
+            message="Go live from Drive, then come back to hold to talk in this room."
+            style={styles.fullWidth}
+          />
         ) : (
           <>
+            {ptt.micPermissionDenied && (
+              <Notice
+                tone="warning"
+                title="Microphone is off"
+                message="Allow microphone access in Settings to talk."
+                actionLabel="Open Settings"
+                onPress={() => void Linking.openSettings()}
+                style={styles.fullWidth}
+              />
+            )}
             <HoldToTalkButton
               state={ptt.state}
               disabled={ptt.isDisabled}
               onPressIn={ptt.onPressIn}
               onPressOut={ptt.onPressOut}
+              audience="the room"
             />
-            {ptt.voiceConnected ? (
-              <Text style={styles.voiceStatusOn}>🔊 Live room audio on</Text>
-            ) : (
-              <Text style={styles.voiceStatusOff}>
-                Indicator only — live audio needs the TestFlight build
-              </Text>
-            )}
-            {ptt.micPermissionDenied && (
-              <Text style={styles.micDenied}>
-                Mic access denied — enable it in Settings to talk
-              </Text>
-            )}
+            <View style={styles.voiceStatus}>
+              <Icon
+                name={ptt.voiceConnected ? 'waveform' : 'info.circle.fill'}
+                size={13}
+                color={ptt.voiceConnected ? colors.success : colors.textSecondary}
+              />
+              <AppText variant="footnote" color="secondary">
+                {ptt.voiceConnected
+                  ? 'Room audio connected'
+                  : "Talk status only. Audio isn't available right now."}
+              </AppText>
+            </View>
           </>
         )}
       </View>
 
-      {/* ── Report modal ────────────────────────────────────────────────── */}
       <ReportModal
         visible={reportTarget !== null}
-        driver={reportModalDriver}
+        driver={reportTarget}
         context="room"
         onClose={() => setReportTarget(null)}
-        onSubmitted={() => setReportTarget(null)}
       />
-    </SafeAreaView>
+    </ScreenBackground>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  safe: {
+const useStyles = makeStyles((t) => ({
+  flex: {
     flex: 1,
-    backgroundColor: Colors.background,
   },
-
-  header: {
+  scroll: {
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.lg,
+    gap: Spacing.lg,
+  },
+  headerBtn: {
+    width: MIN_TOUCH_TARGET,
+    height: MIN_TOUCH_TARGET,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  talking: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    gap: Spacing.sm,
+    gap: 6,
   },
-  backBtn: {
-    fontSize: FontSize.body,
-    color: Colors.primary,
-    fontWeight: FontWeight.medium,
-    minWidth: 50,
-  },
-  headerCenter: {
-    flex: 1,
+  talkBar: {
     alignItems: 'center',
-    gap: 2,
+    gap: Spacing.md12,
+    paddingTop: Spacing.md,
+    paddingHorizontal: SCREEN_INSET,
+    backgroundColor: t.colors.surface,
+    borderTopWidth: 0.5,
+    borderTopColor: t.colors.separator,
   },
-  roomName: {
-    fontSize: FontSize.body,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textPrimary,
+  fullWidth: {
+    alignSelf: 'stretch',
   },
-  memberCount: {
-    fontSize: FontSize.caption,
-    color: Colors.textTertiary,
-  },
-
-  // Invite code bar
-  codeBar: {
+  voiceStatus: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.sm,
-    backgroundColor: Colors.surfaceElevated,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md12,
+    gap: 6,
   },
-  codeBarLabel: {
-    fontSize: FontSize.caption,
-    color: Colors.textTertiary,
-    fontWeight: FontWeight.medium,
-  },
-  codeBarCode: {
-    flex: 1,
-    fontSize: FontSize.body,
-    fontWeight: FontWeight.bold,
-    color: Colors.textPrimary,
-    letterSpacing: 2,
-  },
-  codeBarShare: {
-    fontSize: FontSize.caption,
-    color: Colors.primary,
-    fontWeight: FontWeight.medium,
-  },
-
-  // Member list
-  memberList: {
-    padding: Spacing.md,
-    gap: Spacing.md,
-  },
-
-  // PTT zone
-  pttZone: {
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    backgroundColor: Colors.surface,
-    alignItems: 'center',
-    paddingVertical: Spacing.md,
-  },
-  notLiveBanner: {
-    backgroundColor: Colors.surfaceElevated,
-    borderRadius: Radius.sm,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md12,
-    marginHorizontal: Spacing.md,
-  },
-  notLiveText: {
-    fontSize: FontSize.bodySmall,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: FontSize.bodySmall * 1.5,
-  },
-  voiceStatusOn: {
-    marginTop: Spacing.sm,
-    fontSize: FontSize.caption,
-    color: Colors.live,
-    fontWeight: FontWeight.semibold,
-    textAlign: 'center',
-  },
-  voiceStatusOff: {
-    marginTop: Spacing.sm,
-    fontSize: FontSize.caption,
-    color: Colors.textTertiary,
-    textAlign: 'center',
-  },
-  micDenied: {
-    marginTop: Spacing.xs,
-    fontSize: FontSize.caption,
-    color: Colors.error,
-    textAlign: 'center',
-  },
-});
+}));

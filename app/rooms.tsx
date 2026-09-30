@@ -1,64 +1,73 @@
 /**
- * app/rooms.tsx — list rooms you're a member of; create or join a room.
+ * app/rooms.tsx — rooms you belong to; create one or join with a code.
  *
  * Rooms are always private. Only members can access them.
  * No text chat, no persistent audio, no social feed.
+ * Deleting or leaving a room happens inside the room.
  */
 import React, { useState } from 'react';
-import {
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ActionSheetIOS, Alert, Platform, Pressable, View } from 'react-native';
+import { Stack, useRouter } from 'expo-router';
 
-import { AppButton } from '@/components/AppButton';
-import { AppInput } from '@/components/AppInput';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
 import { LoadingState } from '@/components/LoadingState';
-import { RoomCard } from '@/components/RoomCard';
-import { Colors } from '@/theme/colors';
-import { FontSize, FontWeight } from '@/theme/typography';
-import { Radius, Spacing } from '@/theme/spacing';
+import {
+  Button,
+  Icon,
+  ListRow,
+  ListSection,
+  ScreenBackground,
+  ScreenScroll,
+  Sheet,
+  TextField,
+} from '@/components/ui';
 import { useAuth } from '@/hooks/useAuth';
 import { useRooms } from '@/hooks/useRooms';
+import { makeStyles, useTheme } from '@/theme/ThemeProvider';
+import { MIN_TOUCH_TARGET, Spacing } from '@/theme/spacing';
 
-// ─── Panel mode ───────────────────────────────────────────────────────────────
-
-type PanelMode = 'none' | 'create' | 'join';
-
-// ─── Screen ───────────────────────────────────────────────────────────────────
+type Panel = 'none' | 'create' | 'join';
 
 export default function RoomsScreen() {
   const router = useRouter();
+  const styles = useStyles();
+  const { accent } = useTheme();
   const { user } = useAuth();
-  const { rooms, isLoading, isMutating, error, refresh, create, join, remove } =
-    useRooms();
+  const { rooms, isLoading, isMutating, error, refresh, create, join } = useRooms();
 
-  // ── Panel state ───────────────────────────────────────────────────────────
-  const [panelMode, setPanelMode] = useState<PanelMode>('none');
+  const [panel, setPanel] = useState<Panel>('none');
   const [roomName, setRoomName] = useState('');
   const [roomDescription, setRoomDescription] = useState('');
   const [roomNameError, setRoomNameError] = useState<string | null>(null);
   const [inviteCode, setInviteCode] = useState('');
   const [inviteCodeError, setInviteCodeError] = useState<string | null>(null);
 
-  // ── Handlers ──────────────────────────────────────────────────────────────
-
-  function openPanel(mode: PanelMode) {
+  function openPanel(mode: Panel) {
     setRoomName('');
     setRoomDescription('');
     setRoomNameError(null);
     setInviteCode('');
     setInviteCodeError(null);
-    setPanelMode(mode);
+    setPanel(mode);
+  }
+
+  function openAddMenu() {
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options: ['New Room', 'Join with Code', 'Cancel'], cancelButtonIndex: 2 },
+        (i) => {
+          if (i === 0) openPanel('create');
+          if (i === 1) openPanel('join');
+        },
+      );
+      return;
+    }
+    Alert.alert('Rooms', undefined, [
+      { text: 'New Room', onPress: () => openPanel('create') },
+      { text: 'Join with Code', onPress: () => openPanel('join') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   }
 
   async function handleCreate() {
@@ -79,14 +88,10 @@ export default function RoomsScreen() {
         description: roomDescription.trim() || undefined,
         is_private: true,
       });
-      setPanelMode('none');
-      // Navigate into the newly created room.
+      setPanel('none');
       router.push(`/room/${resp.room_id}`);
     } catch (e) {
-      Alert.alert(
-        'Could not create room',
-        e instanceof Error ? e.message : 'Please try again.',
-      );
+      Alert.alert("Couldn't create room", e instanceof Error ? e.message : 'Please try again.');
     }
   }
 
@@ -100,307 +105,154 @@ export default function RoomsScreen() {
 
     try {
       const resp = await join(code);
-      setPanelMode('none');
+      setPanel('none');
       router.push(`/room/${resp.room_id}`);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Invalid code.';
-      setInviteCodeError(msg);
+      setInviteCodeError(e instanceof Error ? e.message : 'Invalid code.');
     }
   }
 
-  function handleDeleteRoom(roomId: string, roomName_: string) {
-    Alert.alert(
-      'Delete room?',
-      `"${roomName_}" and all its members will be removed. This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            void (async () => {
-              try {
-                await remove(roomId);
-              } catch (e) {
-                Alert.alert(
-                  'Delete failed',
-                  e instanceof Error ? e.message : 'Please try again.',
-                );
-              }
-            })();
-          },
-        },
-      ],
+  const headerRight = () => (
+    <Pressable
+      onPress={openAddMenu}
+      hitSlop={8}
+      style={styles.headerBtn}
+      accessibilityRole="button"
+      accessibilityLabel="New room or join with code"
+    >
+      <Icon name="plus" size={20} color={accent.text} weight="semibold" />
+    </Pressable>
+  );
+
+  let content: React.ReactNode;
+  if (isLoading) {
+    content = <LoadingState message="Loading rooms…" />;
+  } else if (error !== null) {
+    content = (
+      <ScreenBackground>
+        <ErrorState title="Couldn't load rooms" message={error} onRetry={() => void refresh()} />
+      </ScreenBackground>
+    );
+  } else if (rooms.length === 0) {
+    content = (
+      <ScreenBackground>
+        <EmptyState
+          icon="person.3.fill"
+          title="No rooms yet"
+          message="A room is a private channel for a group you drive with. Create one or join with an invite code."
+          actionLabel="New Room"
+          onAction={() => openPanel('create')}
+        />
+        <View style={styles.joinBelow}>
+          <Button label="Join with Code" variant="plain" onPress={() => openPanel('join')} />
+        </View>
+      </ScreenBackground>
+    );
+  } else {
+    content = (
+      <ScreenScroll>
+        <ListSection footer="Rooms are private. Only people with the invite code can join.">
+          {rooms.map((room) => {
+            const isOwner = room.owner_id === user?.id;
+            const detail =
+              room.description !== null && room.description.length > 0
+                ? room.description
+                : isOwner
+                  ? 'You created this room'
+                  : 'Private room';
+            return (
+              <ListRow
+                key={room.id}
+                icon="person.3.fill"
+                iconTone="accent"
+                title={room.name}
+                subtitle={detail}
+                onPress={() => router.push(`/room/${room.id}`)}
+              />
+            );
+          })}
+        </ListSection>
+      </ScreenScroll>
     );
   }
 
-  // ─── Render ─────────────────────────────────────────────────────────────
-
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <KeyboardAvoidingView
-        style={styles.kav}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        {/* ── Header ─────────────────────────────────────────────────────── */}
-        <View style={styles.header}>
-          <Pressable
-            onPress={() => router.back()}
-            hitSlop={12}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-          >
-            <Text style={styles.backBtn}>‹ Back</Text>
-          </Pressable>
-          <Text style={styles.title}>Rooms</Text>
-          <View style={styles.headerActions}>
-            <Pressable
-              onPress={() => openPanel(panelMode === 'join' ? 'none' : 'join')}
-              style={styles.headerBtn}
-              accessibilityRole="button"
-              accessibilityLabel="Join room"
-            >
-              <Text style={styles.headerBtnText}>Join</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => openPanel(panelMode === 'create' ? 'none' : 'create')}
-              style={[styles.headerBtn, styles.headerBtnPrimary]}
-              accessibilityRole="button"
-              accessibilityLabel="Create room"
-            >
-              <Text style={[styles.headerBtnText, styles.headerBtnPrimaryText]}>
-                + Create
-              </Text>
-            </Pressable>
-          </View>
-        </View>
+    <>
+      <Stack.Screen options={{ headerRight }} />
+      {content}
 
-        {/* ── Create / Join panel ─────────────────────────────────────────── */}
-        {panelMode === 'create' && (
-          <View style={styles.panel}>
-            <Text style={styles.panelTitle}>Create Room</Text>
-            <AppInput
-              label="Room Name"
-              placeholder="e.g. Friday Night Cruise"
-              value={roomName}
-              onChangeText={(t) => {
-                setRoomName(t);
-                setRoomNameError(null);
-              }}
-              error={roomNameError ?? undefined}
-              maxLength={80}
-              autoFocus
-              returnKeyType="next"
-            />
-            <AppInput
-              label="Description (optional)"
-              placeholder="What is this room for?"
-              value={roomDescription}
-              onChangeText={setRoomDescription}
-              maxLength={300}
-              returnKeyType="done"
-            />
-            <View style={styles.panelActions}>
-              <AppButton
-                label="Cancel"
-                variant="ghost"
-                size="md"
-                onPress={() => setPanelMode('none')}
-              />
-              <AppButton
-                label="Create"
-                variant="primary"
-                size="md"
-                loading={isMutating}
-                onPress={() => {
-                  void handleCreate();
-                }}
-              />
-            </View>
-          </View>
-        )}
-
-        {panelMode === 'join' && (
-          <View style={styles.panel}>
-            <Text style={styles.panelTitle}>Join by Invite Code</Text>
-            <AppInput
-              label="Invite Code"
-              placeholder="e.g. XKZM4QRT"
-              value={inviteCode}
-              onChangeText={(t) => {
-                setInviteCode(t.toUpperCase());
-                setInviteCodeError(null);
-              }}
-              error={inviteCodeError ?? undefined}
-              autoCapitalize="characters"
-              maxLength={12}
-              autoFocus
-              returnKeyType="go"
-            />
-            <View style={styles.panelActions}>
-              <AppButton
-                label="Cancel"
-                variant="ghost"
-                size="md"
-                onPress={() => setPanelMode('none')}
-              />
-              <AppButton
-                label="Join"
-                variant="primary"
-                size="md"
-                loading={isMutating}
-                onPress={() => {
-                  void handleJoin();
-                }}
-              />
-            </View>
-          </View>
-        )}
-
-        {/* ── Room list ───────────────────────────────────────────────────── */}
-        {isLoading ? (
-          <LoadingState message="Loading rooms…" />
-        ) : error !== null ? (
-          <ErrorState
-            title="Couldn't load rooms"
-            message={error}
-            onRetry={() => {
-              void refresh();
+      <Sheet visible={panel === 'create'} onClose={() => setPanel('none')} title="New Room">
+        <View style={styles.form}>
+          <TextField
+            label="Name"
+            placeholder="e.g. Friday Night Cruise"
+            value={roomName}
+            onChangeText={(t) => {
+              setRoomName(t);
+              setRoomNameError(null);
             }}
+            error={roomNameError}
+            maxLength={80}
+            autoFocus
+            returnKeyType="next"
           />
-        ) : rooms.length === 0 ? (
-          <EmptyState
-            icon="🚗"
-            title="No rooms yet"
-            message="Create a private room or join one with an invite code to drive and talk with a group."
+          <TextField
+            label="Description (optional)"
+            placeholder="What is this room for?"
+            value={roomDescription}
+            onChangeText={setRoomDescription}
+            maxLength={300}
+            returnKeyType="done"
           />
-        ) : (
-          <ScrollView
-            contentContainerStyle={styles.list}
-            showsVerticalScrollIndicator={false}
-          >
-            {rooms.map((room) => {
-              const isOwner = room.owner_id === user?.id;
-              return (
-                <View key={room.id} style={styles.roomRowWrap}>
-                  <RoomCard
-                    room={room}
-                    isOwner={isOwner}
-                    onPress={() => router.push(`/room/${room.id}`)}
-                  />
-                  {isOwner && (
-                    <Pressable
-                      style={styles.deleteBtn}
-                      onPress={() => handleDeleteRoom(room.id, room.name)}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Delete room ${room.name}`}
-                    >
-                      <Text style={styles.deleteBtnText}>Delete</Text>
-                    </Pressable>
-                  )}
-                </View>
-              );
-            })}
-          </ScrollView>
-        )}
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+          <Button
+            label="Create Room"
+            size="lg"
+            fullWidth
+            loading={isMutating}
+            onPress={() => void handleCreate()}
+          />
+        </View>
+      </Sheet>
+
+      <Sheet visible={panel === 'join'} onClose={() => setPanel('none')} title="Join a Room">
+        <View style={styles.form}>
+          <TextField
+            label="Invite code"
+            placeholder="e.g. XKZM4QRT"
+            value={inviteCode}
+            onChangeText={(t) => {
+              setInviteCode(t.toUpperCase());
+              setInviteCodeError(null);
+            }}
+            error={inviteCodeError}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            maxLength={12}
+            autoFocus
+            returnKeyType="go"
+            onSubmitEditing={() => void handleJoin()}
+          />
+          <Button label="Join" size="lg" fullWidth loading={isMutating} onPress={() => void handleJoin()} />
+        </View>
+      </Sheet>
+    </>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-  kav: {
-    flex: 1,
-  },
-
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    gap: Spacing.sm,
-  },
-  backBtn: {
-    fontSize: FontSize.body,
-    color: Colors.primary,
-    fontWeight: FontWeight.medium,
-    minWidth: 50,
-  },
-  title: {
-    flex: 1,
-    fontSize: FontSize.body,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textPrimary,
-    textAlign: 'center',
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: Spacing.xs,
-  },
+const useStyles = makeStyles(() => ({
   headerBtn: {
-    paddingHorizontal: Spacing.md12,
-    paddingVertical: Spacing.sm,
-    borderRadius: Radius.sm,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.surface,
+    width: MIN_TOUCH_TARGET,
+    height: MIN_TOUCH_TARGET,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  headerBtnPrimary: {
-    backgroundColor: Colors.primaryMuted,
-    borderColor: Colors.primary,
+  joinBelow: {
+    alignItems: 'center',
+    paddingBottom: Spacing.xxl,
   },
-  headerBtnText: {
-    fontSize: FontSize.bodySmall,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textSecondary,
-  },
-  headerBtnPrimaryText: {
-    color: Colors.primary,
-  },
-
-  // Create / Join panel
-  panel: {
-    backgroundColor: Colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    padding: Spacing.md,
+  form: {
+    paddingHorizontal: Spacing.md20,
+    paddingBottom: Spacing.md,
     gap: Spacing.md,
   },
-  panelTitle: {
-    fontSize: FontSize.bodyLarge,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textPrimary,
-  },
-  panelActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: Spacing.sm,
-  },
-
-  // Room list
-  list: {
-    padding: Spacing.md,
-    gap: Spacing.md,
-  },
-  roomRowWrap: {
-    gap: Spacing.xs,
-  },
-  deleteBtn: {
-    alignSelf: 'flex-end',
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 3,
-  },
-  deleteBtnText: {
-    fontSize: FontSize.caption,
-    color: Colors.error,
-    fontWeight: FontWeight.medium,
-  },
-});
+}));
