@@ -63,7 +63,7 @@ export function DriveHeader({
         accessibilityLabel={demo ? `${a11yLabel}, demo data` : a11yLabel}
         accessibilityLiveRegion="polite"
       >
-        <RoadPingLogo size={26} road={false} />
+        <RoadPingLogo size={26} />
         <AppText variant="headline" weight="bold" maxScale={DRIVE_CHROME_MAX_SCALE}>
           RoadPing
         </AppText>

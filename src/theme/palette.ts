@@ -149,8 +149,7 @@ export function resolveColors(
   };
 }
 
-/** Brand colors that never change with appearance (logo, splash). */
+/** Brand color that never changes with appearance (logo, icon, splash). */
 export const BRAND = {
   orange: '#FF6B35',
-  amber: '#FFB347',
 } as const;
