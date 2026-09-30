@@ -78,20 +78,11 @@ export type UpdateLocationResponse =
 
 // ─── get-nearby-drivers ───────────────────────────────────────────────────────
 
-export interface GetNearbyDriversRequest {
-  /** Caller's current latitude. */
-  lat: number;
-  /** Caller's current longitude. */
-  lng: number;
-  /**
-   * Override range in metres (100–5000).
-   * If omitted, uses the range stored in the caller's live session.
-   * Capped server-side to the session's stored range_m — cannot exceed it.
-   */
-  range_m?: number;
-}
+// No request fields. Position and range come from the caller's stored live
+// session; `lat`, `lng` and `range_m` sent by older builds are ignored.
 
 export interface GetNearbyDriversResponse {
+  /** Validated by src/services/proximity.ts; each has a distance_band only. */
   drivers: NearbyDriverCard[];
 }
 

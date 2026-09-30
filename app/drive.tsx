@@ -5,8 +5,8 @@
  *   │ [◉ RoadPing · LIVE 3 nearby]   [avatar]   │  DriveHeader (glass)
  *   │                                  [◎]      │  recenter (glass)
  *   │                                  [N]      │  compass (glass)
- *   │                 map                       │
- *   │ [ (Maya) Blue Civic · ~0.4 mi  Talking ]  │  SpeakerCapsule (glass)
+ *   │          map (you + your range)           │
+ *   │ [ (Maya) Honda Civic · ½–1 mi  Talking ]  │  SpeakerCapsule (glass)
  *   │ ┌───────────────────────────────────────┐ │
  *   │ │  End          3 mi   DND              │ │  VoiceDock (glass)
  *   │ │  Nearby   ( HOLD TO TALK )   Rooms    │ │
@@ -17,7 +17,9 @@
  * src/components/drive/* and src/components/ui/*.
  *
  * Hard product rules upheld (unchanged):
- *  - Exact coordinates are never displayed; nearby markers are synthetic.
+ *  - Exact coordinates are never displayed. Other drivers are never placed
+ *    on the map: the server gives only a distance band (Nearby sheet,
+ *    header count, speaker capsule), no position or direction.
  *  - Voice is hold-to-talk only; nothing is recorded.
  *  - Leaving the app ends the session (useAppLifecycleCleanup → stopSilent).
  *  - Ending the session always asks first, so it can't happen by accident.
@@ -95,7 +97,7 @@ export default function DriveScreen() {
 
   const isLive = live.status === 'live';
 
-  const nearby = useNearbyDrivers({ enabled: isLive, rangeM: live.rangeM });
+  const nearby = useNearbyDrivers({ enabled: isLive });
 
   const ptt = useHoldToTalk({
     enabled: isLive,
@@ -361,13 +363,10 @@ export default function DriveScreen() {
   return (
     <View style={styles.root}>
       <NearbyMap
-        drivers={isLive ? nearby.drivers : []}
         rangeM={live.rangeM}
-        selectedDriverId={selectedDriver?.user_id ?? null}
         isLive={isLive}
         userCoords={mapCoords}
         userVehicleEmoji={primaryBodyUi !== null ? bodyTypeEmoji(primaryBodyUi) : null}
-        onMarkerPress={openDriver}
         recenterTick={recenterTick}
         onHeadingChange={setMapHeading}
         topInset={controlsTop}

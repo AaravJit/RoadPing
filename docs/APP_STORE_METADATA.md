@@ -25,8 +25,8 @@ Live voice for nearby drivers
 ## Promotional text (170 chars)
 
 ```
-Tap Start RoadPing and appear on the live map. Join a room and hold to talk
-live to your group. Live only — no recordings, no location history.
+Tap Start RoadPing and nearby live drivers can see you're around. Join a room
+and hold to talk live to your group. Live only — no recordings, no location history.
 ```
 
 ## Description
@@ -34,13 +34,14 @@ live to your group. Live only — no recordings, no location history.
 ```
 RoadPing is a live, map-first voice tool for drivers on the road right now.
 
-Tap Start RoadPing and you appear on a live map within your chosen broadcast
-range. Tap a nearby driver to see their vehicle. Join a Drive Room and hold
-the talk button to talk live to your group. Release to listen. That's it.
+Tap Start RoadPing and live drivers within your chosen broadcast range can
+see you're nearby. Open Nearby to see who's around and what they drive. Join a
+Drive Room and hold the talk button to talk live to your group. Release to
+listen. That's it.
 
 • Live only — you are invisible until you tap Start
 • Map-first — see who's around without scrolling a feed
-• Approximate distance only — your exact coordinates are never shared
+• Broad distance ranges only — never your coordinates, exact distance or direction
 • Drive Rooms — a private group channel with real live group voice
 • On the open map, hold to flash a live "speaking" ping to nearby drivers
 • Voice is live — nothing is recorded or stored

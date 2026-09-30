@@ -1,54 +1,31 @@
 /**
- * MockMapView — radar fallback used only when react-native-maps isn't linked
+ * MockMapView — plain fallback used only when react-native-maps isn't linked
  * (e.g. a JS bundle on a binary without the maps module).
  *
- * PRIVACY: no coordinates in or out. Marker angle is the same synthetic hash
- * the real map uses; radius is proportional to the rounded distance.
+ * Shows you at the centre with neutral rings. Like the real map, it draws no
+ * other drivers: RoadPing knows only a distance band for them, not where they
+ * are, so they are listed in the Nearby sheet instead.
  */
 import React, { useState } from 'react';
-import { Pressable, View, type LayoutChangeEvent } from 'react-native';
+import { View, type LayoutChangeEvent } from 'react-native';
 
 import { AppText } from '@/components/ui';
-import type { NearbyDriverCard } from '@/services/types';
 import { makeStyles } from '@/theme/ThemeProvider';
-import { DriverMarker } from './DriverMarker';
-import { personName } from './identity';
-import { syntheticAngleRad } from './mapPlacement';
 
-/** Fractions of (min dimension / 2) at which range rings are drawn. */
+/** Fractions of (min dimension / 2) at which decorative rings are drawn. */
 const RING_FRACTIONS = [0.25, 0.5, 0.75] as const;
-const HIT = 56;
 
 export interface MockMapViewProps {
-  drivers: NearbyDriverCard[];
-  rangeM: number;
-  selectedDriverId: string | null;
   isLive: boolean;
-  onMarkerPress: (driver: NearbyDriverCard) => void;
 }
 
-export function MockMapView({
-  drivers,
-  rangeM,
-  selectedDriverId,
-  isLive,
-  onMarkerPress,
-}: MockMapViewProps) {
+export function MockMapView({ isLive }: MockMapViewProps) {
   const styles = useStyles();
   const [layout, setLayout] = useState<{ w: number; h: number } | null>(null);
 
   function onLayout(e: LayoutChangeEvent) {
     const { width, height } = e.nativeEvent.layout;
     setLayout({ w: width, h: height });
-  }
-
-  function markerPos(driver: NearbyDriverCard): { x: number; y: number } | null {
-    if (layout === null) return null;
-    const maxR = Math.min(layout.w, layout.h) * 0.38;
-    const angle = syntheticAngleRad(driver.user_id);
-    const ratio = Math.min(driver.approximate_distance_m / rangeM, 1);
-    const r = maxR * (0.2 + ratio * 0.8);
-    return { x: layout.w / 2 + Math.cos(angle) * r, y: layout.h / 2 + Math.sin(angle) * r };
   }
 
   return (
@@ -74,29 +51,6 @@ export function MockMapView({
           style={[styles.you, isLive && styles.youLive, { left: layout.w / 2 - 8, top: layout.h / 2 - 8 }]}
         />
       )}
-
-      {isLive &&
-        drivers.map((d) => {
-          const pos = markerPos(d);
-          if (pos === null) return null;
-          const speaking = d.is_speaking && !d.dnd;
-          return (
-            <Pressable
-              key={d.user_id}
-              style={[styles.hit, { left: pos.x - HIT / 2, top: pos.y - HIT / 2 }]}
-              onPress={() => onMarkerPress(d)}
-              accessibilityRole="button"
-              accessibilityLabel={`${personName(d)}${speaking ? ', talking' : ''}`}
-            >
-              <DriverMarker
-                driver={d}
-                isSpeaking={speaking}
-                isSelected={d.user_id === selectedDriverId}
-                showLabel={false}
-              />
-            </Pressable>
-          );
-        })}
 
       <View style={styles.badge} pointerEvents="none">
         <AppText variant="caption2" color="secondary">
@@ -128,13 +82,6 @@ const useStyles = makeStyles((t) => ({
   },
   youLive: {
     backgroundColor: t.accent.fill,
-  },
-  hit: {
-    position: 'absolute',
-    width: HIT,
-    height: HIT,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   badge: {
     position: 'absolute',

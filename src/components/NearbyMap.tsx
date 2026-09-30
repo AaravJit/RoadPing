@@ -16,31 +16,28 @@
  *     heading, then the last heading, then north-up. The "You" vehicle icon is
  *     an upright billboard and never spins with the map.
  *   • The user marker uses the current user's active vehicle category icon.
- *   • Nearby drivers appear as vehicle-category blips with a clean gamertag
- *     label (display name / @handle) floating above each one.
+ *   • Other drivers are NOT drawn on the map (Phase 2): RoadPing knows only a
+ *     broad distance band for them, not where they are or which way, so any
+ *     map position would be invented. They live in the Nearby sheet, the
+ *     header count and the speaker capsule instead.
  *   • `recenterTick` prop — drive.tsx bumps it to re-lock onto the user.
  *   • Fallback: if `react-native-maps` is unavailable we fall through to
  *     MockMapView so the screen still works.
  *
- * Privacy invariants (unchanged from Phase 7):
- *   • userCoords are used only for centering the camera and the Circle radius.
- *     They are never displayed as text.
- *   • Driver markers are placed at SYNTHETIC positions: angle is a
- *     deterministic hash of user_id (NOT the real bearing). No directional
- *     info leaks.
+ * Privacy invariants:
+ *   • userCoords (your own position) are used only for centering the camera
+ *     and your broadcast-range circle. They are never displayed as text.
+ *   • This component receives no data about other drivers at all.
  *   • No lat/lng is ever rendered as a label.
  */
 import React, { useEffect, useRef } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 import * as Location from 'expo-location';
 
-import type { NearbyDriverCard } from '@/services/types';
 import type { Coords } from '@/services/location';
 import { makeStyles, useTheme } from '@/theme/ThemeProvider';
 import { Radius } from '@/theme/spacing';
 import { MockMapView } from './MockMapView';
-import { DriverMarker } from './DriverMarker';
-import { syntheticCoord } from './mapPlacement';
 
 // ─── Try to load react-native-maps ────────────────────────────────────────────
 
@@ -149,9 +146,6 @@ const FALLBACK_CAMERA = {
   altitude: 4_000_000,
 } as const;
 
-/** Show gamertag labels for everyone until the map gets crowded. */
-const LABEL_CAP = 10;
-
 // ─── YouMarker ────────────────────────────────────────────────────────────────
 
 /** Your own position: vehicle in an accent ring, with a small "You" pill. */
@@ -180,13 +174,10 @@ function YouMarker({ vehicleEmoji }: { vehicleEmoji: string | null }) {
 // ─── RealMapView ──────────────────────────────────────────────────────────────
 
 interface RealMapProps {
-  drivers: NearbyDriverCard[];
   rangeM: number;
-  selectedDriverId: string | null;
   isLive: boolean;
   userCoords: Coords | null;
   userVehicleEmoji: string | null;
-  onMarkerPress: (driver: NearbyDriverCard) => void;
   recenterTick: number;
   onHeadingChange?: (deg: number) => void;
   topInset: number;
@@ -194,13 +185,10 @@ interface RealMapProps {
 }
 
 function RealMapView({
-  drivers,
   rangeM,
-  selectedDriverId,
   isLive,
   userCoords,
   userVehicleEmoji,
-  onMarkerPress,
   recenterTick,
   onHeadingChange,
   topInset,
@@ -376,44 +364,6 @@ function RealMapView({
           <YouMarker vehicleEmoji={userVehicleEmoji} />
         </Marker>
       )}
-
-      {isLive &&
-        userCoords &&
-        drivers.map((d) => {
-          const coord = syntheticCoord(
-            userCoords.lat,
-            userCoords.lng,
-            d.approximate_distance_m,
-            d.user_id,
-          );
-          const isSpeaking = d.is_speaking && !d.dnd;
-          const isSelected = d.user_id === selectedDriverId;
-          const showLabel =
-            drivers.length <= LABEL_CAP || isSelected || isSpeaking;
-          return (
-            <Marker
-              // Keyed by appearance so the marker bitmap is redrawn when
-              // light/dark changes (tracksViewChanges is off when idle).
-              key={`${d.user_id}-${scheme}`}
-              coordinate={coord}
-              anchor={{ x: 0.5, y: 0.5 }}
-              tracksViewChanges={isSpeaking || isSelected}
-              onPress={() => onMarkerPress(d)}
-              accessibilityLabel={isSpeaking ? 'Nearby driver, talking' : 'Nearby driver'}
-              // Upright billboard — we have no reliable per-driver heading, so
-              // their icons stay screen-upright rather than faking a direction.
-              flat={false}
-              zIndex={isSelected ? 100 : isSpeaking ? 50 : 10}
-            >
-              <DriverMarker
-                driver={d}
-                isSpeaking={isSpeaking}
-                isSelected={isSelected}
-                showLabel={showLabel}
-              />
-            </Marker>
-          );
-        })}
     </MapView>
   );
 }
@@ -421,14 +371,11 @@ function RealMapView({
 // ─── NearbyMap — public component ─────────────────────────────────────────────
 
 export interface NearbyMapProps {
-  drivers: NearbyDriverCard[];
   rangeM: number;
-  selectedDriverId: string | null;
   isLive: boolean;
   userCoords: Coords | null;
   /** Emoji for the current user's active vehicle category (null → generic dot). */
   userVehicleEmoji?: string | null;
-  onMarkerPress: (driver: NearbyDriverCard) => void;
   /** Bump this counter to imperatively re-lock the camera on the user. */
   recenterTick?: number;
   /** Fired (rounded degrees) when the camera heading changes — drives the compass. */
@@ -439,13 +386,10 @@ export interface NearbyMapProps {
 }
 
 export function NearbyMap({
-  drivers,
   rangeM,
-  selectedDriverId,
   isLive,
   userCoords,
   userVehicleEmoji = null,
-  onMarkerPress,
   recenterTick = 0,
   onHeadingChange,
   topInset = 0,
@@ -455,13 +399,7 @@ export function NearbyMap({
   if (!maps) {
     return (
       <View style={styles.root}>
-        <MockMapView
-          drivers={drivers}
-          rangeM={rangeM}
-          selectedDriverId={selectedDriverId}
-          isLive={isLive}
-          onMarkerPress={onMarkerPress}
-        />
+        <MockMapView isLive={isLive} />
       </View>
     );
   }
@@ -469,13 +407,10 @@ export function NearbyMap({
   return (
     <View style={styles.root}>
       <RealMapView
-        drivers={drivers}
         rangeM={rangeM}
-        selectedDriverId={selectedDriverId}
         isLive={isLive}
         userCoords={userCoords}
         userVehicleEmoji={userVehicleEmoji}
-        onMarkerPress={onMarkerPress}
         recenterTick={recenterTick}
         onHeadingChange={onHeadingChange}
         topInset={topInset}

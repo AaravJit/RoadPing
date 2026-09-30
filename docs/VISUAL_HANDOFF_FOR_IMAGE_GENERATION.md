@@ -192,6 +192,9 @@ Vehicle identity is **always** primary; person identity is secondary.
 
 ### Marker (`DriverMarker.tsx`)
 
+> Removed in Phase 2 (docs/PHASE2_PROXIMITY_PRIVACY.md): other drivers are
+> no longer drawn on the map. Kept here as design history only.
+
 - 40pt circular pill body (52pt when selected), `rgba(20,20,28,0.96)`
   background, 2pt border.
 - **Color halo:** when `vehicle_color` matches a known swatch (black,

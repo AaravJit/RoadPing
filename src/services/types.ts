@@ -8,8 +8,11 @@
  * PRIVACY RULES:
  *  • lat/lng coordinates never appear in client-facing types.
  *  • location_presence has no client-readable row type (no SELECT RLS policy).
- *  • Nearby driver data comes only via get_nearby_drivers() RPC return type.
+ *  • Nearby driver data comes only from the get-nearby-drivers Edge Function
+ *    (get_nearby_drivers_v3), as a distance band — never a distance or position.
  */
+
+import type { DistanceBand } from './proximity';
 
 // ─── Enums (mirror SQL enum types exactly) ───────────────────────────────────
 
@@ -200,9 +203,11 @@ export type ModerationActionRow = {
 // ─── RPC Return Types ─────────────────────────────────────────────────────────
 
 /**
- * Shape returned by the get_nearby_drivers() Postgres function / Edge Function.
- * NEVER includes raw coordinates — only approximate distance.
- * approximate_distance_m is rounded to the nearest 50 m for privacy.
+ * One nearby live driver, as the app holds it after
+ * src/services/proximity.ts has validated the get-nearby-drivers response.
+ *
+ * Phase 2 contract: NO coordinates, NO numeric distance, NO bearing, NO
+ * session id. Proximity is only a fixed, server-defined distance band.
  */
 export type NearbyDriverCard = {
   user_id: string;
@@ -214,10 +219,9 @@ export type NearbyDriverCard = {
   vehicle_color: string | null;
   vehicle_make: string | null;
   vehicle_model: string | null;
-  /** Rounded to nearest 50 m — never exact */
-  approximate_distance_m: number;
+  /** Broad, approximate distance range. Never a direction or a point. */
+  distance_band: DistanceBand;
   is_speaking: boolean;
-  session_id: string;
   /** Do Not Disturb — client should suppress voice UI for this driver. */
   dnd: boolean;
 }
@@ -347,13 +351,8 @@ export interface Database {
     Views: Record<string, never>;
     Functions: {
       // ── Phase 3 Edge Function helpers (called via admin RPC) ──────────────
-      get_nearby_drivers: {
-        Args: {
-          p_lat: number;
-          p_lng: number;
-          p_range_m: number;
-          p_caller_id: string;
-        };
+      get_nearby_drivers_v3: {
+        Args: { p_caller_id: string };
         Returns: NearbyDriverCard[];
       };
       check_private_zone: {

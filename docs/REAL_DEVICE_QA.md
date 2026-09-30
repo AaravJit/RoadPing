@@ -89,20 +89,20 @@ to exercise the permission gates from scratch.
 - [ ] Brief Wi-Fi / cellular toggle → freshness goes "away" briefly → recovers when network returns.
 - [ ] Session does not end on the device side when heartbeats fail.
 
-## 11. Nearby markers + map
+## 11. Map (you only) + nearby presence
 
 - [ ] Map renders with visible roads, water, subtle labels (not a flat black sheet).
 - [ ] User pin appears as an orange ring + white-bordered dot at your real position.
 - [ ] Range ring (orange) hugs the user pin and matches the chosen broadcast range.
-- [ ] Driver markers (if any) appear as circular vehicle pills with the right emoji.
-- [ ] Speaking driver pulses a red ring.
-- [ ] Marker tap selects driver → bottom sheet expands, selected card visible.
+- [ ] No other driver is ever drawn on the map (Phase 2: RoadPing has no position or direction for them).
+- [ ] Nearby drivers appear only in the header count, the Nearby sheet and the speaker capsule.
+- [ ] A speaking driver shows in the speaker capsule with the same distance range as in Nearby.
 - [ ] Recenter button bottom-right snaps the map back to user after panning.
 
 ## 12. Bottom sheet
 
 - [ ] Drag-handle tap toggles expanded / collapsed without animation glitch.
-- [ ] Selected driver card shows vehicle line, person line, `~Xm · Speaking/Silent/DND` meta.
+- [ ] Selected driver card shows vehicle, name, speaking/DND state and a distance range (e.g. "½–1 mi"), never a single distance.
 - [ ] List rows match the card hierarchy; tapping a row selects that driver.
 - [ ] **No drivers nearby yet** empty state appears when list is empty.
 

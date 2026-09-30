@@ -19,9 +19,10 @@ appear after explicitly tapping Start.
 ## Why we need each permission
 
 - **Location (When In Use only)** — Used **only while RoadPing is active** to
-  show nearby live drivers and to place the user on the live map. No
-  background location. No location history. Exact coordinates are never
-  shown to other users — only an approximate distance and direction.
+  show nearby live drivers and to center the user's own map. No
+  background location. No location history. Other users are never shown
+  coordinates, an exact distance or a direction — only a broad distance
+  range (for example "½–1 mi"), and other drivers are not drawn on the map.
 - **Microphone** — Used **only while the user holds the talk button** to send
   live voice. In a **Drive Room**, the held audio is transmitted to other room
   members in real time over Agora's voice channel (transport only). For the
@@ -106,9 +107,10 @@ running through profile/vehicle setup.
 - **Location history is not stored.** Only the current live presence row
   exists, and it is deleted on Stop / Hide / sign out / app background /
   expiry / private zone entry.
-- Exact coordinates are **never returned** to other users — the
-  `get-nearby-drivers` Edge Function snaps positions to a coarse bucket and
-  only returns approximate distance + bearing.
+- Coordinates, exact distances and directions are **never returned** to
+  other users — the `get-nearby-drivers` Edge Function snaps both positions
+  to a ~250 m grid server-side and returns only a broad distance band, held
+  for ~30 s (docs/PHASE2_PROXIMITY_PRIVACY.md).
 - Other users' positions reach the client **only** through the
   `get-nearby-drivers` Edge Function. Direct reads of `location_presence`
   are blocked by RLS.

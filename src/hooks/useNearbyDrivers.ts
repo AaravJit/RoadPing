@@ -6,10 +6,12 @@
  * Phase 7: same surface, real Edge Function under the hood.
  * Phase 11: Supabase Realtime subscription supplements the 5 s poll so
  *   is_speaking updates arrive in ~1 s without waiting for the next cycle.
+ * Proximity Phase 2: the request carries no position or range (the server
+ *   uses the stored live session), so polling no longer takes a GPS fix, and
+ *   each driver has a distance band that the server holds for ~30 s.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { NearbyDriverCard } from '@/services/types';
-import { getCurrentCoords } from '@/services/location';
 import {
   NEARBY_POLL_INTERVAL_MS,
   getNearbyDrivers,
@@ -27,8 +29,6 @@ export interface UseNearbyDriversResult {
 export interface UseNearbyDriversOptions {
   /** When false, the hook is idle (no polling, drivers stays []). */
   enabled: boolean;
-  /** Broadcast range in metres — also bounds the nearby query radius. */
-  rangeM: number;
 }
 
 export function useNearbyDrivers(
@@ -43,21 +43,16 @@ export function useNearbyDrivers(
     setIsLoading(true);
     setError(null);
     try {
-      const coords = await getCurrentCoords();
-      const { drivers: list } = await getNearbyDrivers({
-        lat: coords.lat,
-        lng: coords.lng,
-        range_m: opts.rangeM,
-      });
+      const { drivers: list } = await getNearbyDrivers();
       setDrivers(list);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load nearby.');
     } finally {
       setIsLoading(false);
     }
-  }, [opts.rangeM]);
+  }, []);
 
-  // Poll effect: re-runs when enabled or rangeM changes.
+  // Poll effect: re-runs when enabled changes.
   useEffect(() => {
     if (!opts.enabled) {
       if (pollRef.current !== null) clearInterval(pollRef.current);
@@ -77,9 +72,9 @@ export function useNearbyDrivers(
     };
   }, [opts.enabled, refresh]);
 
-  // Realtime effect: separate from the poll so range changes do not
-  // tear down and re-create the Supabase channel unnecessarily.
-  // Only depends on opts.enabled — one subscription per live session.
+  // Realtime effect: separate from the poll. Only depends on opts.enabled —
+  // one subscription per live session. The server only delivers speaking
+  // state for drivers in the caller's nearby set (same predicate as the list).
   useEffect(() => {
     if (!opts.enabled) return;
 

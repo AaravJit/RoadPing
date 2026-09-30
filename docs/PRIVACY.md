@@ -44,9 +44,15 @@ when:
 - Your session expires from inactivity (server-side heartbeat timeout).
 - You drive into a private zone.
 
-Other drivers never see your exact coordinates — only a rounded, approximate
-distance within your broadcast range. The map places drivers at approximate
-positions and does not show which direction they are.
+Other drivers are never shown your coordinates, your exact distance, or which
+direction you are from them, and RoadPing does not place you on their map.
+While you are both live and within each other's range, they see only a broad
+distance range, such as "½–1 mi" or "0.8–1.6 km". Our servers work that range
+out from positions snapped to a coarse grid (about 250 m) and keep it the same
+for about 30 seconds at a time. A broad range still says you are somewhere
+nearby: someone who can see you on the road, or who keeps comparing ranges
+while moving around, may be able to narrow down roughly where you are. Use
+Private Zones and Stop & Hide wherever that matters to you.
 
 ## Microphone and voice
 

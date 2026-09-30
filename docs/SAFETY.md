@@ -36,7 +36,7 @@ Breaking them can lead to your account being suspended or permanently removed.
 
 ## Block and report
 
-From any driver's card on the map or in any room you can:
+From any driver's card in Nearby or in any room you can:
 
 - **Block** — mutual: you both become invisible to each other.
 - **Report** — silent: the reported user is never told.

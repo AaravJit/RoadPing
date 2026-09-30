@@ -19,22 +19,14 @@ export function isRangeM(v: unknown): v is number {
 }
 
 /**
- * Fixed proximity steps (metres). Every app range preset is a step. Queries
- * floor the effective range to a step so it cannot be binary-searched to
- * measure someone's exact distance.
+ * Fixed proximity steps (metres). Every app range preset is a step. The
+ * nearby query floors both drivers' stored ranges to a step
+ * (private.range_step_m in migration 012 is the enforcing copy), so a stored
+ * range that is not a step cannot be used to measure someone's distance.
  */
 export const RANGE_STEPS_M = [
   100, 250, 400, 500, 800, 1000, 1600, 2000, 3000, 3200, 4800, 5000,
 ] as const;
-
-/** Largest step <= metres (the smallest step if metres is below it). */
-export function floorToRangeStep(metres: number): number {
-  let step: number = RANGE_STEPS_M[0];
-  for (const s of RANGE_STEPS_M) {
-    if (s <= metres) step = s;
-  }
-  return step;
-}
 
 // ── Enum value sets ────────────────────────────────────────────────────────
 

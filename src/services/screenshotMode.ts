@@ -11,6 +11,8 @@
  *   • Never represents real users — every `user_id` here is a clearly
  *     synthetic UUID prefix (`demo-...`).
  *   • Drive screen overlays a "DEMO MODE" badge whenever this is active.
+ *   • Uses the Phase 2 contract: a distance band per driver, never a
+ *     distance, coordinate or direction (docs/PHASE2_PROXIMITY_PRIVACY.md).
  */
 import type { NearbyDriverCard } from './types';
 
@@ -26,9 +28,8 @@ export const DEMO_DRIVERS: NearbyDriverCard[] = [
     vehicle_color: 'blue',
     vehicle_make: 'Tesla',
     vehicle_model: 'Model 3',
-    approximate_distance_m: 50,
+    distance_band: 'within_800m',
     is_speaking: true,
-    session_id: 'demo-session-1',
     dnd: false,
   },
   {
@@ -41,9 +42,8 @@ export const DEMO_DRIVERS: NearbyDriverCard[] = [
     vehicle_color: 'black',
     vehicle_make: 'Honda',
     vehicle_model: 'Civic',
-    approximate_distance_m: 350,
+    distance_band: 'within_800m',
     is_speaking: false,
-    session_id: 'demo-session-2',
     dnd: false,
   },
   {
@@ -56,9 +56,8 @@ export const DEMO_DRIVERS: NearbyDriverCard[] = [
     vehicle_color: 'red',
     vehicle_make: 'BMW',
     vehicle_model: '320i',
-    approximate_distance_m: 900,
+    distance_band: '800m_to_1600m',
     is_speaking: false,
-    session_id: 'demo-session-3',
     dnd: false,
   },
   {
@@ -71,9 +70,8 @@ export const DEMO_DRIVERS: NearbyDriverCard[] = [
     vehicle_color: 'yellow',
     vehicle_make: 'Ducati',
     vehicle_model: 'Monster',
-    approximate_distance_m: 1500,
+    distance_band: '800m_to_1600m',
     is_speaking: false,
-    session_id: 'demo-session-4',
     dnd: false,
   },
   {
@@ -86,9 +84,8 @@ export const DEMO_DRIVERS: NearbyDriverCard[] = [
     vehicle_color: 'silver',
     vehicle_make: 'Toyota',
     vehicle_model: 'Corolla',
-    approximate_distance_m: 2200,
+    distance_band: '1600m_to_3200m',
     is_speaking: false,
-    session_id: 'demo-session-5',
     dnd: true,
   },
 ];

@@ -40,42 +40,38 @@ function trimDecimal(n: number): string {
 }
 
 /**
- * Format a metre distance for display.
+ * Format a metre distance for display: your own settings (broadcast range,
+ * private-zone radius). Other drivers are never shown as a distance; they get
+ * a band from src/services/proximity.ts.
  * @param meters distance in metres (backend unit)
  * @param system imperial | metric
- * @param opts.approx prefix with "~" (used for privacy-rounded nearby distances)
  */
-export function formatDistance(
-  meters: number,
-  system: UnitSystem,
-  opts?: { approx?: boolean },
-): string {
-  const prefix = opts?.approx ? '~' : '';
-  if (!Number.isFinite(meters) || meters < 0) return `${prefix}0`;
+export function formatDistance(meters: number, system: UnitSystem): string {
+  if (!Number.isFinite(meters) || meters < 0) return '0';
 
   if (system === 'imperial') {
     const feet = meters * FEET_PER_METRE;
     if (feet < 528) {
       // under 0.1 mi → feet, rounded to nearest 10
-      return `${prefix}${Math.max(0, Math.round(feet / 10) * 10)} ft`;
+      return `${Math.max(0, Math.round(feet / 10) * 10)} ft`;
     }
     const miles = meters / METRES_PER_MILE;
     return miles >= 10
-      ? `${prefix}${Math.round(miles)} mi`
-      : `${prefix}${trimDecimal(miles)} mi`;
+      ? `${Math.round(miles)} mi`
+      : `${trimDecimal(miles)} mi`;
   }
 
   // metric
   if (meters < 1000) {
-    return `${prefix}${Math.max(0, Math.round(meters / 10) * 10)} m`;
+    return `${Math.max(0, Math.round(meters / 10) * 10)} m`;
   }
   const km = meters / 1000;
   return km >= 10
-    ? `${prefix}${Math.round(km)} km`
-    : `${prefix}${trimDecimal(km)} km`;
+    ? `${Math.round(km)} km`
+    : `${trimDecimal(km)} km`;
 }
 
-/** Same as formatDistance but without the "~" — for ranges/radii labels. */
+/** Label for a range or radius the user chose. */
 export function formatRange(meters: number, system: UnitSystem): string {
   return formatDistance(meters, system);
 }
