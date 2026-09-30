@@ -40,6 +40,7 @@ import { createAdminClient } from '../_shared/client.ts';
 import { getAuthUser } from '../_shared/auth.ts';
 import { ok, err } from '../_shared/errors.ts';
 import { isUUID } from '../_shared/validate.ts';
+import { isRateLimited } from '../_shared/rateLimit.ts';
 
 /** Token lifetime. Long enough for a full drive; the client refreshes by re-requesting. */
 const TOKEN_TTL_SECONDS = 3600;
@@ -100,6 +101,11 @@ Deno.serve(async (req: Request) => {
     const roomId = body.room_id;
 
     const admin = createAdminClient();
+
+    if (await isRateLimited(admin, user.id, 'agoraToken')) {
+      return err(429, 'Too many requests');
+    }
+
     let channelName: string;
 
     if (target === 'nearby') {

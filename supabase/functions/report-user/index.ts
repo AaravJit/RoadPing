@@ -20,6 +20,7 @@ import {
   isReportReason,
   isReportContext,
 } from '../_shared/validate.ts';
+import { isRateLimited } from '../_shared/rateLimit.ts';
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -60,6 +61,10 @@ Deno.serve(async (req: Request) => {
     }
 
     const admin = createAdminClient();
+
+    if (await isRateLimited(admin, user.id, 'report')) {
+      return err(429, 'Too many requests');
+    }
 
     // ── Insert report ────────────────────────────────────────────────────────
     const { error: reportError } = await admin
