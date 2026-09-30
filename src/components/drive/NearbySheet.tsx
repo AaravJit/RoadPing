@@ -2,8 +2,9 @@
  * NearbySheet — the list of nearby live drivers and a selected driver's
  * details, presented as a glass sheet over the map.
  *
- * Privacy: only the server's rounded distance is shown ("~0.4 mi"); there is
- * no direction and no position. Map placement is explained as approximate.
+ * Privacy: each driver has only a broad distance band from the server
+ * ("½–1 mi"). There is no position and no direction, and nothing here turns
+ * the band back into a single distance.
  */
 import React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
@@ -56,18 +57,17 @@ function DriverStatus({ driver }: { driver: NearbyDriverCard }) {
 function DriverRow({ driver, onPress }: { driver: NearbyDriverCard; onPress: () => void }) {
   const { colors } = useTheme();
   const styles = useStyles();
-  const { formatDistance } = useUnits();
+  const { formatBand, describeBand } = useUnits();
   const speaking = driver.is_speaking && !driver.dnd;
   const name = personName(driver);
   const vehicle = vehicleDescription(driver);
-  const distance = formatDistance(driver.approximate_distance_m, { approx: true });
 
   return (
     <Pressable
       onPress={onPress}
       style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.fill }]}
       accessibilityRole="button"
-      accessibilityLabel={`${name}, ${vehicle}, about ${distance} away${
+      accessibilityLabel={`${name}, ${vehicle}, ${describeBand(driver.distance_band)}${
         driver.dnd ? ', Do Not Disturb' : speaking ? ', talking' : ''
       }`}
       accessibilityHint="Shows driver details"
@@ -86,8 +86,8 @@ function DriverRow({ driver, onPress }: { driver: NearbyDriverCard; onPress: () 
         </AppText>
         <DriverStatus driver={driver} />
       </View>
-      <AppText variant="subheadline" color="secondary" tabular>
-        {distance}
+      <AppText variant="subheadline" color="secondary" numberOfLines={1}>
+        {formatBand(driver.distance_band)}
       </AppText>
       <Icon name="chevron.right" size={13} color={colors.textTertiary} />
     </Pressable>
@@ -106,7 +106,7 @@ function DriverDetail({
   onBlock: () => void;
 }) {
   const styles = useStyles();
-  const { formatDistance } = useUnits();
+  const { formatBand, describeBand } = useUnits();
   const speaking = driver.is_speaking && !driver.dnd;
   const name = personName(driver);
   const handle = personHandle(driver);
@@ -144,19 +144,23 @@ function DriverDetail({
           </View>
         </View>
         <View style={styles.factDivider} />
-        <View style={styles.fact}>
+        <View
+          style={styles.fact}
+          accessible
+          accessibilityLabel={`Distance range, ${describeBand(driver.distance_band)}`}
+        >
           <AppText variant="footnote" color="secondary">
-            Distance
+            Distance range
           </AppText>
-          <AppText variant="body" weight="semibold" tabular>
-            About {formatDistance(driver.approximate_distance_m)}
+          <AppText variant="body" weight="semibold">
+            {formatBand(driver.distance_band)}
           </AppText>
         </View>
       </View>
 
       <AppText variant="footnote" color="secondary">
-        Distances are rounded, and map positions are approximate. RoadPing
-        doesn't show which direction other drivers are.
+        RoadPing shows broad, approximate distance ranges, not another
+        driver's exact location or direction.
       </AppText>
 
       <View style={styles.actions}>

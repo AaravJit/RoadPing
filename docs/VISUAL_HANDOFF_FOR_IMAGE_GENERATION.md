@@ -132,7 +132,8 @@ a sheet with handle). Stack of:
 
 1. **Primary vehicle shortcut row** — 28pt vehicle emoji, label
    ("Midnight Blue Tesla Model 3"), `2018 Tesla Model 3` sub, chevron.
-2. **Range selector** (chips: 500 m / 1 km / 2 km / 3 km / 5 km, the active
+2. **Range selector** (chips: ½ mi / 1 mi / 2 mi / 3 mi, or 800 m / 1.6 km /
+   3.2 km / 4.8 km in metric; the active
    chip uses orange muted fill + orange border + orange text).
 3. **Do Not Disturb row** — toggle.
 4. **Location permission card** (only when not granted) — `Colors.surfaceElevated`
@@ -191,6 +192,9 @@ Vehicle identity is **always** primary; person identity is secondary.
 - Speaking pill ("eq" SpeakingIndicator) on the right when applicable.
 
 ### Marker (`DriverMarker.tsx`)
+
+> Removed in Phase 2 (docs/PHASE2_PROXIMITY_PRIVACY.md): other drivers are
+> no longer drawn on the map. Kept here as design history only.
 
 - 40pt circular pill body (52pt when selected), `rgba(20,20,28,0.96)`
   background, 2pt border.

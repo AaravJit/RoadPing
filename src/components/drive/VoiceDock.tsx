@@ -281,7 +281,7 @@ export function VoiceDock(props: VoiceDockProps) {
           loading={props.starting}
           disabled={props.goLiveDisabled}
           onPress={props.onGoLive}
-          accessibilityHint="Shares your approximate position with nearby live drivers while RoadPing is open"
+          accessibilityHint="Lets nearby live drivers see you, with a broad distance range only, while RoadPing is open"
           style={styles.goLive}
         />
         <AppText variant="footnote" color="secondary" align="center" maxScale={DRIVE_CHROME_MAX_SCALE}>

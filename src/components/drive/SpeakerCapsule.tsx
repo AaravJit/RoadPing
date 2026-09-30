@@ -1,10 +1,11 @@
 /**
  * SpeakerCapsule — who is talking right now, floating above the Voice Dock.
  *
- *   [ (avatar) Maya · Blue Civic · ~0.4 mi   ▌▌▌ Talking  +1 ]
+ *   [ (avatar) Maya · Honda Civic · ½–1 mi   ▌▌▌ Talking  +1 ]
  *
- * Announces new speakers to VoiceOver. Distance is the rounded, approximate
- * value from the server (prefixed "~"); no direction is ever implied.
+ * Announces new speakers to VoiceOver. Proximity is the server's broad
+ * distance band, the same one the Nearby sheet shows; never a single
+ * distance and never a direction.
  */
 import React, { useEffect, useRef } from 'react';
 import { AccessibilityInfo, Animated, Pressable, View } from 'react-native';
@@ -28,12 +29,13 @@ interface SpeakerCapsuleProps {
 export function SpeakerCapsule({ speaker, othersCount, onPress }: SpeakerCapsuleProps) {
   const { colors, a11y } = useTheme();
   const styles = useStyles();
-  const { formatDistance } = useUnits();
+  const { formatBand, describeBand } = useUnits();
   const enter = useRef(new Animated.Value(0)).current;
 
   const name = personName(speaker);
   const vehicle = vehicleShort(speaker);
-  const distance = formatDistance(speaker.approximate_distance_m, { approx: true });
+  const band = formatBand(speaker.distance_band);
+  const spokenBand = describeBand(speaker.distance_band);
 
   useEffect(() => {
     enter.setValue(0);
@@ -59,7 +61,7 @@ export function SpeakerCapsule({ speaker, othersCount, onPress }: SpeakerCapsule
       <Pressable
         onPress={onPress}
         accessibilityRole="button"
-        accessibilityLabel={`${name} is talking. ${vehicle}, about ${distance} away.${
+        accessibilityLabel={`${name} is talking. ${vehicle}, ${spokenBand}.${
           othersCount > 0 ? ` ${othersCount} more talking.` : ''
         }`}
         accessibilityHint="Shows driver details"
@@ -81,7 +83,7 @@ export function SpeakerCapsule({ speaker, othersCount, onPress }: SpeakerCapsule
               numberOfLines={1}
               maxScale={DRIVE_CHROME_MAX_SCALE}
             >
-              {vehicle} · {distance}
+              {vehicle} · {band}
             </AppText>
           </View>
           <View style={styles.talking}>

@@ -15,8 +15,12 @@ import React, {
 
 import { loadUnitSystem, saveUnitSystem } from '@/services/unitsStorage';
 import {
+  describeDistanceBand,
+  formatDistanceBand,
+  type DistanceBand,
+} from '@/services/proximity';
+import {
   DEFAULT_UNIT_SYSTEM,
-  formatDistance,
   formatRange,
   type UnitSystem,
 } from '@/services/units';
@@ -25,15 +29,19 @@ interface UnitsContextValue {
   system: UnitSystem;
   setSystem: (s: UnitSystem) => void;
   /** Convenience formatters bound to the active system. */
-  formatDistance: (meters: number, opts?: { approx?: boolean }) => string;
   formatRange: (meters: number) => string;
+  /** Another driver's distance band: "Within ½ mi", "0.8–1.6 km". */
+  formatBand: (band: DistanceBand) => string;
+  /** The same band for VoiceOver: "within half a mile". */
+  describeBand: (band: DistanceBand) => string;
 }
 
 const UnitsContext = createContext<UnitsContextValue>({
   system: DEFAULT_UNIT_SYSTEM,
   setSystem: () => {},
-  formatDistance: (m, opts) => formatDistance(m, DEFAULT_UNIT_SYSTEM, opts),
   formatRange: (m) => formatRange(m, DEFAULT_UNIT_SYSTEM),
+  formatBand: (b) => formatDistanceBand(b, DEFAULT_UNIT_SYSTEM),
+  describeBand: (b) => describeDistanceBand(b, DEFAULT_UNIT_SYSTEM),
 });
 
 export function UnitsProvider({ children }: { children: React.ReactNode }) {
@@ -58,8 +66,9 @@ export function UnitsProvider({ children }: { children: React.ReactNode }) {
   const value: UnitsContextValue = {
     system,
     setSystem,
-    formatDistance: (m, opts) => formatDistance(m, system, opts),
     formatRange: (m) => formatRange(m, system),
+    formatBand: (b) => formatDistanceBand(b, system),
+    describeBand: (b) => describeDistanceBand(b, system),
   };
 
   return <UnitsContext.Provider value={value}>{children}</UnitsContext.Provider>;

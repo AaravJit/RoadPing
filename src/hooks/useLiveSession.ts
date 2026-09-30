@@ -25,6 +25,7 @@ import {
   requestLocationPermission,
   type Coords,
 } from '@/services/location';
+import { broadcastRangeFor } from '@/services/units';
 
 export type LiveStatus = 'offline' | 'starting' | 'live' | 'stopping' | 'error';
 
@@ -119,6 +120,11 @@ export function useLiveSession(opts: UseLiveSessionOptions): UseLiveSessionResul
       if (status === 'starting' || status === 'live') return;
       setError(null);
       setHiddenInZone(false); // clear on each new attempt
+      const range = broadcastRangeFor(rangeM);
+      if (range === null) {
+        setError('Ranges now start at ½ mile. Pick a range to go live.');
+        return;
+      }
       setStatus('starting');
 
       try {
@@ -142,7 +148,7 @@ export function useLiveSession(opts: UseLiveSessionOptions): UseLiveSessionResul
         // ── 3. Start session on server ───────────────────────────────────────
         const resp = await startLiveSession({
           vehicle_id: vehicleId ?? undefined,
-          range_m: rangeM,
+          range_m: range,
           lat: coords.lat,
           lng: coords.lng,
           ...(coords.heading !== undefined ? { heading: coords.heading } : {}),

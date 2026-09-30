@@ -5,8 +5,10 @@
 #
 #   PGHOST=/tmp PGPORT=54399 PGUSER=postgres scripts/db-test/run.sh
 #
-# Set ROLLBACK_CHECK=1 to also apply the rollback script and re-apply the
-# latest migration afterwards.
+# Set ROLLBACK_CHECK=1 to also apply the rollback script of the latest
+# migration, run the tests that do not depend on it (they must still pass on
+# the rolled-back schema), then re-apply the migration and run everything
+# again. CONCURRENCY_CHECK=0 skips scripts/db-test/concurrency.sh.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -24,8 +26,12 @@ done
 "${PSQL[@]}" -d "$DB" -c 'CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;'
 
 run_tests() {
-  local failed=0 out
+  local failed=0 out skip="${1:-}"
   for t in "$ROOT"/supabase/tests/database/*.sql; do
+    if [[ -n "$skip" ]] && grep -q "$skip" "$t"; then
+      echo "skip: $(basename "$t") (needs $skip)"
+      continue
+    fi
     echo "test: $(basename "$t")"
     out="$(PGOPTIONS='--search_path=public,extensions' "${PSQL[@]}" -d "$DB" -t -A -f "$t")"
     grep -E '^(ok|not ok|#)' <<<"$out" || true
@@ -36,11 +42,17 @@ run_tests() {
 
 run_tests
 
+if [[ "${CONCURRENCY_CHECK:-1}" == "1" ]]; then
+  echo "concurrency: concurrency.sh"
+  DB_NAME="$DB" "$ROOT/scripts/db-test/concurrency.sh"
+fi
+
 if [[ "${ROLLBACK_CHECK:-0}" == "1" ]]; then
   latest="$(ls "$ROOT"/supabase/migrations/*.sql | tail -1)"
   down="$ROOT/supabase/rollback/$(basename "$latest" .sql).down.sql"
   echo "rollback: $(basename "$down")"
   "${PSQL[@]}" -d "$DB" -f "$down"
+  run_tests "$(basename "$latest" .sql)"
   echo "re-apply: $(basename "$latest")"
   "${PSQL[@]}" -d "$DB" -f "$latest"
   run_tests

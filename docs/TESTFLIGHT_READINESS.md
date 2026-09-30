@@ -44,9 +44,9 @@ Cross-references:
 ## 3. iOS permissions
 
 - [ ] `NSLocationWhenInUseUsageDescription` reads: "RoadPing uses your
-      location while active to show nearby live drivers and let you appear
-      on the live map after you tap Start RoadPing. Your exact coordinates
-      are never shared and no location history is stored."
+      location while active to show nearby live drivers and let them see
+      you're nearby after you tap Go Live. Your exact coordinates are never
+      shared and no location history is stored."
 - [ ] `NSMicrophoneUsageDescription` reads: "RoadPing uses your microphone
       when you hold to talk to nearby drivers or room members. Voice is
       live only and not recorded or stored."

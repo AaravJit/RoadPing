@@ -46,7 +46,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:proximity": "node --test scripts/client-test/proximity.test.mjs scripts/client-test/ranges.test.mjs"
   },
   "private": true
 }

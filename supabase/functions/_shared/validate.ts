@@ -19,20 +19,21 @@ export function isRangeM(v: unknown): v is number {
 }
 
 /**
- * Fixed proximity steps (metres). Every app range preset is a step. Queries
- * floor the effective range to a step so it cannot be binary-searched to
- * measure someone's exact distance.
+ * The only broadcast ranges (metres): the public distance-band edges plus one
+ * maximum. private.range_step_m in migration 012 is the enforcing copy, and
+ * src/services/units.ts offers exactly these presets. Because every range is
+ * a band edge, "is this driver in my range" never says more than the band,
+ * however many times someone restarts with a different range.
  */
-export const RANGE_STEPS_M = [
-  100, 250, 400, 500, 800, 1000, 1600, 2000, 3000, 3200, 4800, 5000,
-] as const;
+export const BROADCAST_RANGES_M = [800, 1600, 3200, 4800] as const;
 
-/** Largest step <= metres (the smallest step if metres is below it). */
-export function floorToRangeStep(metres: number): number {
-  let step: number = RANGE_STEPS_M[0];
-  for (const s of RANGE_STEPS_M) {
-    if (s <= metres) step = s;
-  }
+/**
+ * Largest allowed range <= v, or null when v is below the smallest one.
+ * Flooring never widens someone's radius; below 800 m the caller must choose.
+ */
+export function broadcastRangeFor(v: number): number | null {
+  let step: number | null = null;
+  for (const s of BROADCAST_RANGES_M) if (s <= v) step = s;
   return step;
 }
 

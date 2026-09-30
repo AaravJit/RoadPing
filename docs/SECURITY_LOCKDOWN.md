@@ -115,9 +115,15 @@ Realtime (`src/services/voice.ts:220`).
 - The caller's effective range is floored to a fixed step
   (100, 250, 400, 500, 800, 1000, 1600, 2000, 3000, 3200, 4800, 5000 m; the
   app's presets are all steps), so the range cannot be binary-searched.
+  **Superseded by migration 012:** the only effective ranges are now 800,
+  1600, 3200 and 4800 m (the Phase 2 band edges plus a maximum), because
+  restarting a session at 12 different ranges still split a band.
 - Banned callers get 403 from nearby; a banned user's heartbeat ends the session.
-- Distances are still rounded to 50 m. Snapping to a grid / distance bands is
-  Task 2 and is what closes slow trilateration by a GPS-spoofing account.
+- Distances are still rounded to 50 m in v2. **Superseded by migration 012
+  (Phase 2):** the app now uses `get_nearby_drivers_v3`, which returns only a
+  distance band from grid-snapped positions, held for 30 s, with no caller
+  range parameter; `can_view_open_voice` uses the same predicate. See
+  `docs/PHASE2_PROXIMITY_PRIVACY.md`.
 
 ## Live-session lifecycle contract
 

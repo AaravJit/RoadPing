@@ -90,7 +90,7 @@ export default function BlockedUsersScreen() {
 
   return (
     <ScreenScroll>
-      <ListSection footer="Blocked drivers can't see you on the live map, and you won't see them. They aren't told.">
+      <ListSection footer="Blocked drivers can't see you in Nearby, and you won't see them. They aren't told.">
         {blockedUsers.map((u) => (
           <BlockedUserRow
             key={u.blocked_id}

@@ -29,8 +29,8 @@ if Apple still asks for it during the submission flow.
 3. Add a primary vehicle with a vivid color (Midnight Blue is the best).
 4. Stand near a residential street so the dark Apple Maps tile actually
    shows roads behind the markers — empty grid blocks look bad.
-5. Set the broadcast range to **2 km** so the range ring is visible without
-   the markers running off the map edge.
+5. Set the broadcast range to **1 mi** (1.6 km) so the range ring is fully
+   visible around you.
 6. Enable iOS **Do Not Disturb** so no banner notifications creep in.
 7. Hide the battery percentage and route the device through a USB-C
    connection to keep the status bar identical across shots.
@@ -45,12 +45,18 @@ build is not accidentally shipped with the demo flag.
 
 ## 2. The five hero shots
 
+> **Phase 2 (docs/PHASE2_PROXIMITY_PRIVACY.md):** the app no longer draws
+> other drivers on the map and shows distance ranges ("½–1 mi"), not
+> distances ("~50 m"). The current `assets/appstore` shots 01 and 02 show
+> stranger map markers and point distances and must be retaken before they
+> are uploaded. Shots 1 and 2 below describe the Phase 2 screens.
+
 ### Shot 1 — Drive map live
 
 - **Screen:** Drive screen, LIVE state.
-- **Setup:** Demo mode on → five nearby markers visible (Miguel, Anita,
-  Jordan, Sam, Priya). Range chip reads "2 km". One driver pulse (Miguel)
-  is actively speaking.
+- **Setup:** Demo mode on → header reads "5 nearby"; your vehicle and range
+  circle on the map (no other drivers are drawn on it). Miguel is speaking,
+  so the speaker capsule shows "Miguel · Tesla Model 3 · Within ½ mi".
 - **Headline overlay:** "Go live on the road map"
 - **Subheadline overlay:** "Tap Start RoadPing to appear and see other
   drivers nearby."
@@ -60,13 +66,13 @@ build is not accidentally shipped with the demo flag.
 ### Shot 2 — Selected nearby driver
 
 - **Screen:** Drive screen, LIVE, Miguel selected.
-- **Setup:** Tap Miguel's marker — bottom sheet expanded, selected card on
-  top, two list rows beneath.
+- **Setup:** Tap the speaker capsule or Nearby → Miguel's detail in the
+  Nearby sheet, with the distance range and Report / Block.
 - **Headline:** "See nearby active drivers"
-- **Subheadline:** "Approximate distance only. Exact coordinates are never
-  shared."
+- **Subheadline:** "Broad distance ranges only. Never exact location or
+  direction."
 - **What it sells:** vehicle-first identity ("Midnight Blue Tesla Model 3"),
-  distance-only privacy, block/report present.
+  distance-range-only privacy, block/report present.
 
 ### Shot 3 — Hold to talk
 

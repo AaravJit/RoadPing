@@ -1,14 +1,18 @@
 /**
- * NearbyMap — locked, pitched, vehicle-follow driving radar for Drive.
+ * NearbyMap — pitched, vehicle-follow driving map for Drive, freely browsable.
  *
- * Phase 16D correction patch:
- *   • The camera is LOCKED to the user. There is no 2D/3D toggle and no free
- *     map browsing — scroll / zoom / rotate / pitch *gestures* are disabled.
- *     The 3D pitch is applied programmatically via the Camera API, so the user
- *     can never flatten the map back to a 2D top-down browse view.
- *   • Always pitched (3D-style) where the OS map provider supports camera
- *     pitch (Apple Maps on iOS, Google Maps on Android). See rangeToZoom /
- *     PITCH below and the limitation note in buildCamera().
+ * Camera modes:
+ *   • FOLLOWING (default): centred on you, pitched, heading-follow. Every new
+ *     fix, compass change or range change re-frames the camera.
+ *   • BROWSING: any drag, pinch, rotate or tilt with a finger suspends follow.
+ *     The map then stays exactly where the user put it; nothing animates the
+ *     camera back while they look around.
+ *   • The recenter button (`recenterTick`) returns to your position and
+ *     resumes heading-follow. `onFollowChange` tells the parent which mode is
+ *     active so the button can show it.
+ *   • The pitched view is the default framing, set through the Camera API on
+ *     follow and recenter (Apple Maps on iOS, Google Maps on Android). See
+ *     rangeToZoom / PITCH below and the limitation note in buildCamera().
  *   • Close-up framing around the user's active vehicle, derived from rangeM.
  *   • Compass-follow: the camera heading tracks the device compass (foreground
  *     watchHeadingAsync — magnetometer, NOT background location) so the world
@@ -16,31 +20,27 @@
  *     heading, then the last heading, then north-up. The "You" vehicle icon is
  *     an upright billboard and never spins with the map.
  *   • The user marker uses the current user's active vehicle category icon.
- *   • Nearby drivers appear as vehicle-category blips with a clean gamertag
- *     label (display name / @handle) floating above each one.
- *   • `recenterTick` prop — drive.tsx bumps it to re-lock onto the user.
+ *   • Other drivers are NOT drawn on the map (Phase 2): RoadPing knows only a
+ *     broad distance band for them, not where they are or which way, so any
+ *     map position would be invented. They live in the Nearby sheet, the
+ *     header count and the speaker capsule instead.
  *   • Fallback: if `react-native-maps` is unavailable we fall through to
  *     MockMapView so the screen still works.
  *
- * Privacy invariants (unchanged from Phase 7):
- *   • userCoords are used only for centering the camera and the Circle radius.
- *     They are never displayed as text.
- *   • Driver markers are placed at SYNTHETIC positions: angle is a
- *     deterministic hash of user_id (NOT the real bearing). No directional
- *     info leaks.
+ * Privacy invariants:
+ *   • userCoords (your own position) are used only for centering the camera
+ *     and your broadcast-range circle. They are never displayed as text.
+ *   • This component receives no data about other drivers at all.
  *   • No lat/lng is ever rendered as a label.
  */
 import React, { useEffect, useRef } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 import * as Location from 'expo-location';
 
-import type { NearbyDriverCard } from '@/services/types';
 import type { Coords } from '@/services/location';
 import { makeStyles, useTheme } from '@/theme/ThemeProvider';
 import { Radius } from '@/theme/spacing';
 import { MockMapView } from './MockMapView';
-import { DriverMarker } from './DriverMarker';
-import { syntheticCoord } from './mapPlacement';
 
 // ─── Try to load react-native-maps ────────────────────────────────────────────
 
@@ -71,13 +71,10 @@ const maps = tryLoadMaps();
 
 // ─── Camera tuning ──────────────────────────────────────────────────────────────
 
-/**
- * Programmatic 3D tilt. Applied via the Camera API regardless of pitch
- * gestures (which are disabled) so the view is ALWAYS pitched where supported.
- */
+/** Default 3D tilt, applied via the Camera API while following and on recenter. */
 const PITCH = 55;
 
-/** Animation duration when the camera re-locks onto the user (ms). */
+/** Animation duration when the camera follows the user (ms). */
 const FOLLOW_MS = 600;
 
 /**
@@ -89,6 +86,9 @@ const FOLLOW_MS = 600;
  */
 const HEADING_THRESHOLD_DEG = 4;
 const HEADING_ANIM_MS = 250;
+
+/** Finger travel (points) that turns a touch into a browse gesture, not a tap. */
+const DRAG_SLOP_PT = 8;
 
 /** Smallest absolute angle (0–180°) between two compass bearings. */
 function angularDelta(a: number, b: number): number {
@@ -149,9 +149,6 @@ const FALLBACK_CAMERA = {
   altitude: 4_000_000,
 } as const;
 
-/** Show gamertag labels for everyone until the map gets crowded. */
-const LABEL_CAP = 10;
-
 // ─── YouMarker ────────────────────────────────────────────────────────────────
 
 /** Your own position: vehicle in an accent ring, with a small "You" pill. */
@@ -180,29 +177,25 @@ function YouMarker({ vehicleEmoji }: { vehicleEmoji: string | null }) {
 // ─── RealMapView ──────────────────────────────────────────────────────────────
 
 interface RealMapProps {
-  drivers: NearbyDriverCard[];
   rangeM: number;
-  selectedDriverId: string | null;
   isLive: boolean;
   userCoords: Coords | null;
   userVehicleEmoji: string | null;
-  onMarkerPress: (driver: NearbyDriverCard) => void;
   recenterTick: number;
   onHeadingChange?: (deg: number) => void;
+  onFollowChange?: (following: boolean) => void;
   topInset: number;
   bottomInset: number;
 }
 
 function RealMapView({
-  drivers,
   rangeM,
-  selectedDriverId,
   isLive,
   userCoords,
   userVehicleEmoji,
-  onMarkerPress,
   recenterTick,
   onHeadingChange,
+  onFollowChange,
   topInset,
   bottomInset,
 }: RealMapProps) {
@@ -226,6 +219,69 @@ function RealMapView({
   const onHeadingChangeRef = useRef(onHeadingChange);
   onHeadingChangeRef.current = onHeadingChange;
   const lastEmittedHeadingRef = useRef(-1);
+
+  // ── Follow vs browse ────────────────────────────────────────────────────────
+  /** True while the camera follows you; false once a finger moves the map. */
+  const followingRef = useRef(true);
+  const onFollowChangeRef = useRef(onFollowChange);
+  onFollowChangeRef.current = onFollowChange;
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  function setFollowing(next: boolean) {
+    if (followingRef.current === next) return;
+    followingRef.current = next;
+    onFollowChangeRef.current?.(next);
+  }
+
+  /** A user gesture on the map: stop following, leave the camera where it is. */
+  function suspendFollow() {
+    setFollowing(false);
+  }
+
+  // Touch heuristics that work on both providers (Apple Maps reports no
+  // isGesture flag): two fingers (pinch / rotate / tilt), a finger that moves
+  // past the slop, or a touch the native map takes over (cancel) all count
+  // as browsing. A plain tap does not.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function handleTouchStart(e: any) {
+    const touches = e.nativeEvent.touches ?? [];
+    if (touches.length > 1) {
+      suspendFollow();
+      return;
+    }
+    touchStartRef.current = { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY };
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function handleTouchMove(e: any) {
+    const touches = e.nativeEvent.touches ?? [];
+    const start = touchStartRef.current;
+    if (
+      touches.length > 1 ||
+      (start !== null &&
+        Math.hypot(e.nativeEvent.pageX - start.x, e.nativeEvent.pageY - start.y) > DRAG_SLOP_PT)
+    ) {
+      suspendFollow();
+    }
+  }
+  function handleTouchEnd() {
+    touchStartRef.current = null;
+  }
+  function handleTouchCancel() {
+    // The native map claimed the touch for a pan / pinch / rotate.
+    if (touchStartRef.current !== null) suspendFollow();
+    touchStartRef.current = null;
+  }
+
+  /** While browsing, keep the compass in step with the heading the user set. */
+  function syncHeadingFromMap() {
+    if (followingRef.current || !mapRef.current?.getCamera) return;
+    void mapRef.current
+      .getCamera()
+      .then((cam: { heading?: number }) => {
+        if (typeof cam?.heading === 'number') emitHeading(cam.heading);
+      })
+      .catch(() => {});
+  }
 
   function emitHeading(deg: number) {
     const r = Math.round(((deg % 360) + 360) % 360);
@@ -272,8 +328,9 @@ function RealMapView({
           if (!Number.isFinite(raw) || raw < 0) return;
           compassActiveRef.current = true;
           headingRef.current = raw;
-          emitHeading(raw);
+          if (followingRef.current) emitHeading(raw);
           if (
+            !followingRef.current ||
             !mapRef.current ||
             userCoordsRef.current === null ||
             angularDelta(raw, lastAppliedHeadingRef.current) < HEADING_THRESHOLD_DEG
@@ -297,24 +354,29 @@ function RealMapView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasCoords]);
 
-  // Follow/lock: re-center on every new fix (and re-frame on range changes).
+  // Follow: re-center on every new fix (and re-frame on range changes) while
+  // following. While browsing, nothing moves the camera.
   // Heading is owned by the compass above; until it activates we seed from the
   // GPS course heading so the very first frames still point the right way.
   useEffect(() => {
-    if (!mapRef.current || !userCoords) return;
-    if (!compassActiveRef.current && typeof userCoords.heading === 'number') {
+    if (!compassActiveRef.current && typeof userCoords?.heading === 'number') {
       headingRef.current = userCoords.heading;
-      lastAppliedHeadingRef.current = userCoords.heading;
     }
+    if (!followingRef.current || !mapRef.current || !userCoords) return;
+    lastAppliedHeadingRef.current = headingRef.current;
     emitHeading(headingRef.current);
     mapRef.current.animateCamera(buildCamera(), { duration: FOLLOW_MS });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userCoords?.lat, userCoords?.lng, userCoords?.heading, rangeM]);
 
-  // Manual re-center: restore the centered, pitched, heading-follow view.
+  // Recenter: resume following and restore the centred, pitched,
+  // heading-follow view.
   useEffect(() => {
     if (recenterTick === 0) return;
+    setFollowing(true);
     if (!mapRef.current || !userCoords) return;
+    lastAppliedHeadingRef.current = headingRef.current;
+    emitHeading(headingRef.current);
     mapRef.current.animateCamera(buildCamera(), { duration: 450 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recenterTick]);
@@ -325,112 +387,86 @@ function RealMapView({
   const initialCamera = userCoords ? buildCamera() : FALLBACK_CAMERA;
 
   return (
-    <MapView
-      ref={mapRef}
-      style={StyleSheet.absoluteFillObject}
-      provider={undefined}
-      // Follows the app appearance (Apple Maps light/dark).
-      userInterfaceStyle={scheme}
-      customMapStyle={Platform.OS === 'android' && scheme === 'dark' ? DARK_MAP_STYLE : undefined}
-      initialCamera={initialCamera}
-      showsUserLocation={false}
-      showsMyLocationButton={false}
-      showsScale={false}
-      showsTraffic={false}
-      showsBuildings={true}
-      showsIndoors={false}
-      showsPointsOfInterest={false}
-      showsCompass={false}
-      toolbarEnabled={false}
-      // Locked driving view: no free browsing and no manual 2D/3D switch.
-      // The 3D pitch is forced through the Camera API above, not gestures.
-      scrollEnabled={false}
-      zoomEnabled={false}
-      rotateEnabled={false}
-      pitchEnabled={false}
-      mapPadding={{ top: topInset, right: 0, bottom: bottomInset, left: 0 }}
+    <View
+      style={StyleSheet.absoluteFill}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchCancel}
     >
-      {isLive && userCoords && (
-        <Circle
-          center={{ latitude: userCoords.lat, longitude: userCoords.lng }}
-          radius={rangeM}
-          strokeColor={accent.fill}
-          strokeWidth={1.5}
-          fillColor={accent.muted}
-        />
-      )}
+      <MapView
+        ref={mapRef}
+        style={StyleSheet.absoluteFillObject}
+        provider={undefined}
+        // Follows the app appearance (Apple Maps light/dark).
+        userInterfaceStyle={scheme}
+        customMapStyle={Platform.OS === 'android' && scheme === 'dark' ? DARK_MAP_STYLE : undefined}
+        initialCamera={initialCamera}
+        showsUserLocation={false}
+        showsMyLocationButton={false}
+        showsScale={false}
+        showsTraffic={false}
+        showsBuildings={true}
+        showsIndoors={false}
+        showsPointsOfInterest={false}
+        showsCompass={false}
+        toolbarEnabled={false}
+        // Freely browsable with normal gestures; any of them suspends follow.
+        scrollEnabled
+        zoomEnabled
+        rotateEnabled
+        pitchEnabled
+        onPanDrag={suspendFollow}
+        // Google Maps flags user moves; Apple Maps relies on the touch handlers.
+        onRegionChangeStart={(e: { nativeEvent?: { isGesture?: boolean } }) => {
+          if (e?.nativeEvent?.isGesture === true) suspendFollow();
+        }}
+        onRegionChangeComplete={syncHeadingFromMap}
+        mapPadding={{ top: topInset, right: 0, bottom: bottomInset, left: 0 }}
+      >
+        {isLive && userCoords && (
+          <Circle
+            center={{ latitude: userCoords.lat, longitude: userCoords.lng }}
+            radius={rangeM}
+            strokeColor={accent.fill}
+            strokeWidth={1.5}
+            fillColor={accent.muted}
+          />
+        )}
 
-      {userCoords && (
-        <Marker
-          coordinate={{ latitude: userCoords.lat, longitude: userCoords.lng }}
-          anchor={{ x: 0.5, y: 0.5 }}
-          key={`you-${scheme}`}
-          tracksViewChanges={false}
-          // Upright billboard: never lies flat or spins with the map. As the
-          // camera heading rotates, the "You" vehicle icon stays facing
-          // straight up/forward on screen.
-          flat={false}
-          rotation={0}
-          zIndex={999}
-        >
-          <YouMarker vehicleEmoji={userVehicleEmoji} />
-        </Marker>
-      )}
-
-      {isLive &&
-        userCoords &&
-        drivers.map((d) => {
-          const coord = syntheticCoord(
-            userCoords.lat,
-            userCoords.lng,
-            d.approximate_distance_m,
-            d.user_id,
-          );
-          const isSpeaking = d.is_speaking && !d.dnd;
-          const isSelected = d.user_id === selectedDriverId;
-          const showLabel =
-            drivers.length <= LABEL_CAP || isSelected || isSpeaking;
-          return (
-            <Marker
-              // Keyed by appearance so the marker bitmap is redrawn when
-              // light/dark changes (tracksViewChanges is off when idle).
-              key={`${d.user_id}-${scheme}`}
-              coordinate={coord}
-              anchor={{ x: 0.5, y: 0.5 }}
-              tracksViewChanges={isSpeaking || isSelected}
-              onPress={() => onMarkerPress(d)}
-              accessibilityLabel={isSpeaking ? 'Nearby driver, talking' : 'Nearby driver'}
-              // Upright billboard — we have no reliable per-driver heading, so
-              // their icons stay screen-upright rather than faking a direction.
-              flat={false}
-              zIndex={isSelected ? 100 : isSpeaking ? 50 : 10}
-            >
-              <DriverMarker
-                driver={d}
-                isSpeaking={isSpeaking}
-                isSelected={isSelected}
-                showLabel={showLabel}
-              />
-            </Marker>
-          );
-        })}
-    </MapView>
+        {userCoords && (
+          <Marker
+            coordinate={{ latitude: userCoords.lat, longitude: userCoords.lng }}
+            anchor={{ x: 0.5, y: 0.5 }}
+            key={`you-${scheme}`}
+            tracksViewChanges={false}
+            // Upright billboard: never lies flat or spins with the map. As the
+            // camera heading rotates, the "You" vehicle icon stays facing
+            // straight up/forward on screen.
+            flat={false}
+            rotation={0}
+            zIndex={999}
+          >
+            <YouMarker vehicleEmoji={userVehicleEmoji} />
+          </Marker>
+        )}
+      </MapView>
+    </View>
   );
 }
 
 // ─── NearbyMap — public component ─────────────────────────────────────────────
 
 export interface NearbyMapProps {
-  drivers: NearbyDriverCard[];
   rangeM: number;
-  selectedDriverId: string | null;
   isLive: boolean;
   userCoords: Coords | null;
   /** Emoji for the current user's active vehicle category (null → generic dot). */
   userVehicleEmoji?: string | null;
-  onMarkerPress: (driver: NearbyDriverCard) => void;
-  /** Bump this counter to imperatively re-lock the camera on the user. */
+  /** Bump this counter to return to your position and resume following. */
   recenterTick?: number;
+  /** Fired when the camera starts (true) or stops (false) following you. */
+  onFollowChange?: (following: boolean) => void;
   /** Fired (rounded degrees) when the camera heading changes — drives the compass. */
   onHeadingChange?: (deg: number) => void;
   /** Space covered by floating chrome, so "you" stays centred in what's visible. */
@@ -439,15 +475,13 @@ export interface NearbyMapProps {
 }
 
 export function NearbyMap({
-  drivers,
   rangeM,
-  selectedDriverId,
   isLive,
   userCoords,
   userVehicleEmoji = null,
-  onMarkerPress,
   recenterTick = 0,
   onHeadingChange,
+  onFollowChange,
   topInset = 0,
   bottomInset = 120,
 }: NearbyMapProps) {
@@ -455,13 +489,7 @@ export function NearbyMap({
   if (!maps) {
     return (
       <View style={styles.root}>
-        <MockMapView
-          drivers={drivers}
-          rangeM={rangeM}
-          selectedDriverId={selectedDriverId}
-          isLive={isLive}
-          onMarkerPress={onMarkerPress}
-        />
+        <MockMapView isLive={isLive} />
       </View>
     );
   }
@@ -469,15 +497,13 @@ export function NearbyMap({
   return (
     <View style={styles.root}>
       <RealMapView
-        drivers={drivers}
         rangeM={rangeM}
-        selectedDriverId={selectedDriverId}
         isLive={isLive}
         userCoords={userCoords}
         userVehicleEmoji={userVehicleEmoji}
-        onMarkerPress={onMarkerPress}
         recenterTick={recenterTick}
         onHeadingChange={onHeadingChange}
+        onFollowChange={onFollowChange}
         topInset={topInset}
         bottomInset={bottomInset}
       />

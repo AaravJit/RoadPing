@@ -56,7 +56,7 @@ export default function SafetyScreen() {
         <DocSection title="Block and report">
           <P>
             If a driver makes you uncomfortable, you can block or report them
-            from their card on the map or in any room. Blocks are mutual: you
+            from their card in Nearby or in any room. Blocks are mutual: you
             will both become invisible to each other. Reports are silent — the
             reported user is never told.
           </P>
@@ -68,8 +68,8 @@ export default function SafetyScreen() {
 
         <DocSection title="Your privacy is on by default">
           <Bullet>You are invisible until you tap Go Live.</Bullet>
-          <Bullet>Other drivers never see your exact coordinates.</Bullet>
-          <Bullet>Ending your live session removes you from the map immediately.</Bullet>
+          <Bullet>Other drivers never see your coordinates, exact distance or direction.</Bullet>
+          <Bullet>Ending your live session removes you from Nearby immediately.</Bullet>
           <Bullet>Voice is live only — nothing is recorded.</Bullet>
           <Bullet>No location history is stored.</Bullet>
         </DocSection>

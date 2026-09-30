@@ -3,10 +3,10 @@
  *
  *   ┌───────────────────────────────────────────┐
  *   │ [◉ RoadPing · LIVE 3 nearby]   [avatar]   │  DriveHeader (glass)
- *   │                                  [◎]      │  recenter (glass)
+ *   │                                  [◎]      │  recenter (glass): follow again
  *   │                                  [N]      │  compass (glass)
- *   │                 map                       │
- *   │ [ (Maya) Blue Civic · ~0.4 mi  Talking ]  │  SpeakerCapsule (glass)
+ *   │   map (you + your range), free to browse  │
+ *   │ [ (Maya) Honda Civic · ½–1 mi  Talking ]  │  SpeakerCapsule (glass)
  *   │ ┌───────────────────────────────────────┐ │
  *   │ │  End          3 mi   DND              │ │  VoiceDock (glass)
  *   │ │  Nearby   ( HOLD TO TALK )   Rooms    │ │
@@ -17,7 +17,9 @@
  * src/components/drive/* and src/components/ui/*.
  *
  * Hard product rules upheld (unchanged):
- *  - Exact coordinates are never displayed; nearby markers are synthetic.
+ *  - Exact coordinates are never displayed. Other drivers are never placed
+ *    on the map: the server gives only a distance band (Nearby sheet,
+ *    header count, speaker capsule), no position or direction.
  *  - Voice is hold-to-talk only; nothing is recorded.
  *  - Leaving the app ends the session (useAppLifecycleCleanup → stopSilent).
  *  - Ending the session always asks first, so it can't happen by accident.
@@ -57,7 +59,7 @@ import {
 import { blockUser } from '@/services/moderation';
 import { updateProfile } from '@/services/profile';
 import type { NearbyDriverCard } from '@/services/types';
-import { DEFAULT_RANGE_M } from '@/services/units';
+import { DEFAULT_RANGE_M, broadcastRangeFor } from '@/services/units';
 import { bodyTypeEmoji, bodyTypeSqlToUi } from '@/services/vehicle';
 import { makeStyles } from '@/theme/ThemeProvider';
 import { DRIVE_TOUCH_TARGET, Spacing } from '@/theme/spacing';
@@ -81,21 +83,25 @@ export default function DriveScreen() {
     hasLoaded: vehiclesLoaded,
   } = useVehicles(user?.id ?? null);
 
+  // A stored range means the largest allowed range at or below it (never
+  // wider). A legacy ¼ mi / 500 m default stays as is, so Go Live asks the
+  // user to pick a range rather than silently widening it.
+  const toLiveRange = (m: number) => broadcastRangeFor(m) ?? m;
   const live = useLiveSession({
-    initialRangeM: profile?.default_range_m ?? DEFAULT_RANGE_M,
+    initialRangeM: toLiveRange(profile?.default_range_m ?? DEFAULT_RANGE_M),
   });
 
   // Sync rangeM once with the profile default (fires only once after load).
   useEffect(() => {
     if (profile !== null && live.status === 'offline') {
-      live.setRangeM(profile.default_range_m);
+      live.setRangeM(toLiveRange(profile.default_range_m));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.default_range_m]);
 
   const isLive = live.status === 'live';
 
-  const nearby = useNearbyDrivers({ enabled: isLive, rangeM: live.rangeM });
+  const nearby = useNearbyDrivers({ enabled: isLive });
 
   const ptt = useHoldToTalk({
     enabled: isLive,
@@ -121,6 +127,7 @@ export default function DriveScreen() {
   const [permStatus, setPermStatus] = useState<LocationPermissionStatus>('undetermined');
   const [recenterTick, setRecenterTick] = useState(0);
   const [mapHeading, setMapHeading] = useState(0);
+  const [mapFollowing, setMapFollowing] = useState(true);
 
   // Going offline closes live-only UI.
   useEffect(() => {
@@ -201,13 +208,17 @@ export default function DriveScreen() {
 
   // ── Handlers ───────────────────────────────────────────────────────────────
   function handleGoLive() {
+    if (!rangeIsSet) {
+      setRangeOpen(true);
+      return;
+    }
     void live.start(primary?.id ?? null);
   }
 
   /** Ending always goes through a confirmation sheet. */
   function handleEnd() {
     const message =
-      'Nearby drivers stop seeing you on the map right away.';
+      "You'll disappear from Nearby right away.";
     if (Platform.OS === 'ios') {
       ActionSheetIOS.showActionSheetWithOptions(
         {
@@ -298,7 +309,8 @@ export default function DriveScreen() {
   }
 
   // ── Derived display values ─────────────────────────────────────────────────
-  const rangeLabel = formatRange(live.rangeM);
+  const rangeIsSet = broadcastRangeFor(live.rangeM) !== null;
+  const rangeLabel = rangeIsSet ? formatRange(live.rangeM) : 'Set range';
   const speaking = nearby.drivers.filter((d) => d.is_speaking && !d.dnd);
   const speaker = isLive ? (speaking[0] ?? null) : null;
   const primaryBodyUi =
@@ -361,15 +373,13 @@ export default function DriveScreen() {
   return (
     <View style={styles.root}>
       <NearbyMap
-        drivers={isLive ? nearby.drivers : []}
         rangeM={live.rangeM}
-        selectedDriverId={selectedDriver?.user_id ?? null}
         isLive={isLive}
         userCoords={mapCoords}
         userVehicleEmoji={primaryBodyUi !== null ? bodyTypeEmoji(primaryBodyUi) : null}
-        onMarkerPress={openDriver}
         recenterTick={recenterTick}
         onHeadingChange={setMapHeading}
+        onFollowChange={setMapFollowing}
         topInset={controlsTop}
         bottomInset={dockHeight + dockBottom}
       />
@@ -393,7 +403,8 @@ export default function DriveScreen() {
             icon="location.fill"
             onPress={() => setRecenterTick((t) => t + 1)}
             accessibilityLabel="Recenter map"
-            accessibilityHint="Centers the map on your position"
+            accessibilityHint="Centers the map on your position and follows your heading again"
+            highlighted={mapFollowing}
             size={48}
           />
           <MapCompass heading={mapHeading} />
@@ -486,7 +497,9 @@ export default function DriveScreen() {
         <View style={styles.rangeBody}>
           <RangeSelector value={live.rangeM} onChange={live.setRangeM} />
           <AppText variant="footnote" color="secondary">
-            Used when you go live. Set your default in Settings.
+            {rangeIsSet
+              ? 'Used when you go live. Set your default in Settings.'
+              : 'Ranges now start at ½ mile. Pick one to go live.'}
           </AppText>
         </View>
       </Sheet>
