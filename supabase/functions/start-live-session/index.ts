@@ -9,6 +9,7 @@
  *  • vehicle_id must belong to the requesting user
  *  • Starting inside a private zone is blocked (returns 403)
  *  • Any existing active session is cleanly ended first
+ *  • Rate-limited per user
  *  • GPS coordinates are NEVER returned to the client
  */
 
@@ -17,6 +18,7 @@ import { createAdminClient } from '../_shared/client.ts';
 import { getAuthUser } from '../_shared/auth.ts';
 import { ok, err } from '../_shared/errors.ts';
 import { isUUID, isLat, isLng, isRangeM } from '../_shared/validate.ts';
+import { isRateLimited } from '../_shared/rateLimit.ts';
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -51,6 +53,10 @@ Deno.serve(async (req: Request) => {
     }
 
     const admin = createAdminClient();
+
+    if (await isRateLimited(admin, user.id, 'startLive')) {
+      return err(429, 'Too many requests');
+    }
 
     // ── Profile + ban check ──────────────────────────────────────────────────
     const { data: profile, error: profileError } = await admin

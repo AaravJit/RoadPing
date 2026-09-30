@@ -11,6 +11,7 @@
  *   • Any existing open voice session for this live session is closed first
  *   • NO audio is stored anywhere — this is a speaking indicator only
  *   • expires_at is 60 seconds; client must call stop-voice-session when done
+ *   • Rate-limited per user
  */
 
 import { corsHeaders } from '../_shared/cors.ts';
@@ -18,6 +19,7 @@ import { createAdminClient } from '../_shared/client.ts';
 import { getAuthUser } from '../_shared/auth.ts';
 import { ok, err } from '../_shared/errors.ts';
 import { isUUID } from '../_shared/validate.ts';
+import { isRateLimited } from '../_shared/rateLimit.ts';
 
 const VOICE_SESSION_SECONDS = 60;
 
@@ -49,6 +51,10 @@ Deno.serve(async (req: Request) => {
     }
 
     const admin = createAdminClient();
+
+    if (await isRateLimited(admin, user.id, 'startVoice')) {
+      return err(429, 'Too many requests');
+    }
 
     // ── Verify live session ownership + active status ─────────────────────────
     const { data: session } = await admin

@@ -8,6 +8,11 @@
  * the session is ended immediately (they vanish from radar) and the client
  * is notified via { status: 'session_ended', reason: 'private_zone' }.
  *
+ * A banned user's session is ended (403). A reported position outside the
+ * plausible-movement envelope keeps the session alive at the last accepted
+ * position (see update_location_heartbeat, docs/SECURITY_LOCKDOWN.md).
+ * Rate-limited per user.
+ *
  * Called every ~10–15 seconds by the mobile app while driving.
  * GPS coordinates are NEVER returned to the client.
  */
@@ -17,6 +22,7 @@ import { createAdminClient } from '../_shared/client.ts';
 import { getAuthUser } from '../_shared/auth.ts';
 import { ok, err } from '../_shared/errors.ts';
 import { isLat, isLng } from '../_shared/validate.ts';
+import { isRateLimited } from '../_shared/rateLimit.ts';
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -43,6 +49,10 @@ Deno.serve(async (req: Request) => {
 
     const admin = createAdminClient();
 
+    if (await isRateLimited(admin, user.id, 'heartbeat')) {
+      return err(429, 'Too many requests');
+    }
+
     // ── Find active session ──────────────────────────────────────────────────
     const { data: session } = await admin
       .from('live_sessions')
@@ -56,6 +66,25 @@ Deno.serve(async (req: Request) => {
     }
 
     const session_id = (session as { id: string }).id;
+
+    // ── Ban check: a ban ends the live session ───────────────────────────────
+    const { data: profile } = await admin
+      .from('profiles')
+      .select('is_banned')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (!profile || (profile as { is_banned: boolean }).is_banned) {
+      const { error: endError } = await admin.rpc('end_live_session', {
+        p_session_id: session_id,
+        p_user_id: user.id,
+        p_reason: 'banned',
+      });
+      if (endError) {
+        console.error('end_live_session (banned) error:', endError);
+      }
+      return err(403, 'Account suspended');
+    }
 
     // ── Private zone check ───────────────────────────────────────────────────
     const { data: inZone, error: zoneError } = await admin.rpc('check_private_zone', {
@@ -97,6 +126,12 @@ Deno.serve(async (req: Request) => {
     if (heartbeatError) {
       console.error('update_location_heartbeat error:', heartbeatError);
       return err(500, 'Failed to update location');
+    }
+
+    // NULL: the session ended or its presence was swept between the lookup
+    // above and the heartbeat.
+    if (newExpiry === null) {
+      return err(404, 'No active session');
     }
 
     // Note: lat/lng are NOT included in the response.
