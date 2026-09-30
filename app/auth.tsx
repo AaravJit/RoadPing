@@ -10,24 +10,21 @@
  *   - Sign-up + no email confirmation → router.replace('/') (session is live)
  */
 import React, { useState } from 'react';
-import {
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { View } from 'react-native';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 
-import { AppInput } from '@/components/AppInput';
-import { AppButton } from '@/components/AppButton';
 import { RoadPingLogo } from '@/components/RoadPingLogo';
-import { Colors } from '@/theme/colors';
-import { FontSize, FontWeight, TextStyles } from '@/theme/typography';
-import { Radius, Spacing } from '@/theme/spacing';
+import {
+  AppText,
+  Button,
+  Notice,
+  Screen,
+  ScreenScroll,
+  SegmentedControl,
+  TextField,
+} from '@/components/ui';
+import { makeStyles } from '@/theme/ThemeProvider';
+import { SCREEN_INSET, Spacing } from '@/theme/spacing';
 import {
   signInWithPassword,
   signUp,
@@ -39,8 +36,14 @@ type Mode = 'signin' | 'signup';
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
+const MODE_SEGMENTS = [
+  { value: 'signin' as const, label: 'Sign In' },
+  { value: 'signup' as const, label: 'Create Account' },
+];
+
 export default function AuthScreen() {
   const router = useRouter();
+  const styles = useStyles();
   const params = useLocalSearchParams<{ mode?: string }>();
 
   // Derive initial mode from query param; fall back to sign-in.
@@ -125,39 +128,41 @@ export default function AuthScreen() {
   // ── Email confirmation sent ───────────────────────────────────────────────
   if (emailConfirmSent) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-        <View style={styles.confirmContainer}>
-          <RoadPingLogo size={88} />
-
-          <View style={styles.confirmHeader}>
-            <Text style={styles.confirmTitle}>Check your email</Text>
-            <Text style={styles.confirmBody}>
-              We sent a verification link to{'\n'}
-              <Text style={styles.confirmEmail}>{email}</Text>
-            </Text>
-            <Text style={styles.confirmHint}>
-              Open it on this device and you&apos;ll come straight back into
-              RoadPing — already signed in.
-            </Text>
-          </View>
+      <Screen edges={['bottom']}>
+        <Stack.Screen options={{ title: '' }} />
+        <View style={styles.confirm}>
+          <RoadPingLogo size={72} />
+          <AppText variant="title1" weight="bold" align="center" accessibilityRole="header">
+            Check your email
+          </AppText>
+          <AppText variant="body" color="secondary" align="center">
+            We sent a verification link to{'\n'}
+            <AppText variant="body" weight="semibold">
+              {email}
+            </AppText>
+          </AppText>
+          <AppText variant="footnote" color="secondary" align="center">
+            Open it on this iPhone and you&apos;ll come straight back into RoadPing, already signed in.
+          </AppText>
 
           {resendNote !== null && (
-            <Text style={styles.resendNote}>{resendNote}</Text>
+            <AppText variant="footnote" color="secondary" align="center" accessibilityLiveRegion="polite">
+              {resendNote}
+            </AppText>
           )}
 
           <View style={styles.confirmActions}>
-            <AppButton
-              label="Resend verification email"
+            <Button
+              label="Resend Email"
               variant="secondary"
               size="lg"
               fullWidth
               loading={resending}
-              onPress={handleResend}
+              onPress={() => void handleResend()}
             />
-            <AppButton
-              label="Back to sign in"
-              variant="ghost"
-              size="md"
+            <Button
+              label="Back to Sign In"
+              variant="plain"
               fullWidth
               onPress={() => {
                 setEmailConfirmSent(false);
@@ -170,268 +175,98 @@ export default function AuthScreen() {
             />
           </View>
         </View>
-      </SafeAreaView>
+      </Screen>
     );
   }
 
   // ── Main form ─────────────────────────────────────────────────────────────
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <KeyboardAvoidingView
-        style={styles.kav}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {/* ── Back ───────────────────────────────────────────────────────── */}
-          <Pressable
-            onPress={() => {
-              router.back();
-            }}
-            style={styles.backButton}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            accessibilityLabel="Go back"
-            accessibilityRole="button"
-          >
-            <Text style={styles.backText}>← Back</Text>
-          </Pressable>
+    <ScreenScroll contentStyle={styles.content}>
+      <Stack.Screen options={{ title: mode === 'signin' ? 'Sign In' : 'Create Account' }} />
 
-          {/* ── Header ─────────────────────────────────────────────────────── */}
-          <View style={styles.header}>
-            <Text style={styles.title}>
-              {mode === 'signin' ? 'Welcome back' : 'Create account'}
-            </Text>
-            <Text style={styles.subtitle}>
-              {mode === 'signin'
-                ? 'Sign in to your RoadPing account.'
-                : 'Join RoadPing — it only takes a minute.'}
-            </Text>
-          </View>
+      <AppText variant="body" color="secondary">
+        {mode === 'signin'
+          ? 'Welcome back. Sign in with your email.'
+          : 'It only takes a minute. You choose your name and vehicle next.'}
+      </AppText>
 
-          {/* ── Mode tabs ──────────────────────────────────────────────────── */}
-          <View style={styles.tabs} accessibilityRole="tablist">
-            <Pressable
-              style={[styles.tab, mode === 'signin' && styles.tabActive]}
-              onPress={() => switchMode('signin')}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: mode === 'signin' }}
-              accessibilityLabel="Sign In tab"
-            >
-              <Text
-                style={[styles.tabLabel, mode === 'signin' && styles.tabLabelActive]}
-              >
-                Sign In
-              </Text>
-            </Pressable>
+      <SegmentedControl<Mode>
+        segments={MODE_SEGMENTS}
+        value={mode}
+        onChange={switchMode}
+        accessibilityLabel="Sign in or create account"
+      />
 
-            <Pressable
-              style={[styles.tab, mode === 'signup' && styles.tabActive]}
-              onPress={() => switchMode('signup')}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: mode === 'signup' }}
-              accessibilityLabel="Create Account tab"
-            >
-              <Text
-                style={[styles.tabLabel, mode === 'signup' && styles.tabLabelActive]}
-              >
-                Create Account
-              </Text>
-            </Pressable>
-          </View>
+      <View style={styles.fields}>
+        <TextField
+          label="Email"
+          placeholder="you@example.com"
+          value={email}
+          onChangeText={setEmail}
+          keyboardType="email-address"
+          autoCapitalize="none"
+          autoCorrect={false}
+          autoComplete="email"
+          textContentType="emailAddress"
+          returnKeyType="next"
+        />
+        <TextField
+          label="Password"
+          placeholder={mode === 'signin' ? 'Your password' : 'At least 6 characters'}
+          value={password}
+          onChangeText={setPassword}
+          secure
+          autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
+          textContentType={mode === 'signin' ? 'password' : 'newPassword'}
+          returnKeyType={mode === 'signup' ? 'next' : 'go'}
+          onSubmitEditing={mode === 'signin' ? () => void handleSubmit() : undefined}
+        />
+        {mode === 'signup' && (
+          <TextField
+            label="Confirm password"
+            placeholder="Repeat your password"
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+            secure
+            autoComplete="new-password"
+            textContentType="newPassword"
+            returnKeyType="go"
+            onSubmitEditing={() => void handleSubmit()}
+          />
+        )}
+      </View>
 
-          {/* ── Form fields ────────────────────────────────────────────────── */}
-          <View style={styles.form}>
-            <AppInput
-              label="Email"
-              placeholder="you@example.com"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoComplete="email"
-              textContentType="emailAddress"
-              returnKeyType="next"
-            />
+      {error !== null && <Notice tone="danger" message={error} />}
 
-            <AppInput
-              label="Password"
-              placeholder={
-                mode === 'signin' ? 'Your password' : 'At least 6 characters'
-              }
-              value={password}
-              onChangeText={setPassword}
-              secure
-              textContentType={mode === 'signin' ? 'password' : 'newPassword'}
-              returnKeyType={mode === 'signup' ? 'next' : 'go'}
-              onSubmitEditing={mode === 'signin' ? handleSubmit : undefined}
-            />
-
-            {mode === 'signup' && (
-              <AppInput
-                label="Confirm Password"
-                placeholder="Repeat your password"
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-                secure
-                textContentType="newPassword"
-                returnKeyType="go"
-                onSubmitEditing={handleSubmit}
-              />
-            )}
-
-            {/* Error banner */}
-            {error !== null && (
-              <View style={styles.errorBanner} accessibilityRole="alert">
-                <Text style={styles.errorText}>{error}</Text>
-              </View>
-            )}
-
-            <AppButton
-              label={mode === 'signin' ? 'Sign In' : 'Create Account'}
-              variant="primary"
-              size="lg"
-              fullWidth
-              loading={loading}
-              onPress={handleSubmit}
-            />
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+      <Button
+        label={mode === 'signin' ? 'Sign In' : 'Create Account'}
+        size="lg"
+        fullWidth
+        loading={loading}
+        onPress={() => void handleSubmit()}
+      />
+    </ScreenScroll>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: Colors.background,
+const useStyles = makeStyles(() => ({
+  content: {
+    paddingHorizontal: SCREEN_INSET,
+    gap: Spacing.lg,
   },
-  kav: {
-    flex: 1,
-  },
-  scroll: {
-    paddingHorizontal: Spacing.md,
-    paddingTop: Spacing.md,
-    paddingBottom: Spacing.xxl,
-    gap: Spacing.xl,
-    flexGrow: 1,
-  },
-
-  // ── Back button ───────────────────────────────────────────────────────────
-  backButton: {
-    alignSelf: 'flex-start',
-  },
-  backText: {
-    fontSize: FontSize.body,
-    fontWeight: FontWeight.medium,
-    color: Colors.textBrand,
-  },
-
-  // ── Header ───────────────────────────────────────────────────────────────
-  header: {
-    gap: Spacing.sm,
-  },
-  title: {
-    ...TextStyles.headingLarge,
-    color: Colors.textPrimary,
-  },
-  subtitle: {
-    ...TextStyles.body,
-    color: Colors.textSecondary,
-  },
-
-  // ── Mode tabs ─────────────────────────────────────────────────────────────
-  tabs: {
-    flexDirection: 'row',
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.sm,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.xs,
-    gap: Spacing.xs,
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: Spacing.md12,
-    borderRadius: Radius.xs,
-    alignItems: 'center',
-  },
-  tabActive: {
-    backgroundColor: Colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: Colors.borderFocused,
-  },
-  tabLabel: {
-    fontSize: FontSize.body,
-    fontWeight: FontWeight.medium,
-    color: Colors.textTertiary,
-  },
-  tabLabelActive: {
-    color: Colors.textPrimary,
-  },
-
-  // ── Form ─────────────────────────────────────────────────────────────────
-  form: {
+  fields: {
     gap: Spacing.md,
   },
-  errorBanner: {
-    backgroundColor: Colors.errorMuted,
-    borderRadius: Radius.sm,
-    borderWidth: 1,
-    borderColor: Colors.error,
-    padding: Spacing.md,
-  },
-  errorText: {
-    fontSize: FontSize.bodySmall,
-    color: Colors.error,
-    textAlign: 'center',
-  },
-
-  // ── Email confirmation ────────────────────────────────────────────────────
-  confirmContainer: {
+  confirm: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: Spacing.xl,
-    gap: Spacing.xl,
-  },
-  confirmHeader: {
-    alignItems: 'center',
     gap: Spacing.md12,
-  },
-  confirmTitle: {
-    ...TextStyles.headingLarge,
-    color: Colors.textPrimary,
-    textAlign: 'center',
-  },
-  confirmBody: {
-    ...TextStyles.body,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: FontSize.body * 1.6,
-  },
-  confirmEmail: {
-    color: Colors.textBrand,
-    fontWeight: FontWeight.semibold,
-  },
-  confirmHint: {
-    fontSize: FontSize.bodySmall,
-    color: Colors.textTertiary,
-    textAlign: 'center',
-    lineHeight: FontSize.bodySmall * 1.5,
-  },
-  resendNote: {
-    fontSize: FontSize.bodySmall,
-    color: Colors.textSecondary,
-    textAlign: 'center',
   },
   confirmActions: {
     alignSelf: 'stretch',
     gap: Spacing.sm,
+    marginTop: Spacing.lg,
   },
-});
+}));

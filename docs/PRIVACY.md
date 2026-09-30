@@ -1,6 +1,6 @@
 # RoadPing — Privacy Policy
 
-_Last updated: 2026-05-28_
+_Last updated: 2026-09-30_
 
 This is the canonical privacy policy for RoadPing. The in-app screen at
 `app/privacy.tsx` mirrors this text. Both must be kept in sync. The public URL
@@ -39,13 +39,14 @@ request background location. We do not store location history.
 Your current position is held only as your live presence record. It is deleted
 when:
 
-- You tap **Stop** or **Hide**.
+- You end your live session.
 - You sign out, close, or background the app.
 - Your session expires from inactivity (server-side heartbeat timeout).
 - You drive into a private zone.
 
-Other drivers never see your exact coordinates — only an approximate distance
-and direction within your broadcast range.
+Other drivers never see your exact coordinates — only a rounded, approximate
+distance within your broadcast range. The map places drivers at approximate
+positions and does not show which direction they are.
 
 ## Microphone and voice
 
@@ -87,7 +88,7 @@ These providers process data on our behalf so RoadPing can function.
 - You can revoke location or microphone access in iOS Settings at any time.
 - You can turn on Do Not Disturb in Settings to hide your speaking indicator
   from nearby drivers.
-- You can stop being visible at any time with Stop or Hide.
+- You can stop being visible at any time by ending your live session.
 - You can delete your account from Settings → Delete account. The deletion is
   immediate and irreversible.
 

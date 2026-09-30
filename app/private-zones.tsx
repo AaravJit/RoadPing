@@ -8,150 +8,48 @@
  * Privacy guarantees upheld here:
  *  - Raw coordinates (center) are NEVER shown — only the name, kind, radius.
  *  - Zones are invisible to all other users (enforced by RLS).
- *  - Location is only requested when the user taps "Create zone here."
+ *  - Location is only requested when the user taps "Create Zone Here".
  */
 import React, { useState } from 'react';
-import {
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-  ActivityIndicator,
-} from 'react-native';
-import { Redirect, useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ActionSheetIOS, Alert, Platform, ScrollView, View } from 'react-native';
+import { Redirect } from 'expo-router';
 
-import { AppButton } from '@/components/AppButton';
-import { AppInput } from '@/components/AppInput';
 import { EmptyState } from '@/components/EmptyState';
 import { LoadingState } from '@/components/LoadingState';
-import { Colors } from '@/theme/colors';
-import { FontSize, FontWeight } from '@/theme/typography';
-import { Radius, Spacing } from '@/theme/spacing';
+import {
+  AppText,
+  Button,
+  ListRow,
+  ListSection,
+  Notice,
+  ScreenScroll,
+  SegmentedControl,
+  Sheet,
+  TextField,
+  type IconName,
+} from '@/components/ui';
 import { useAuth } from '@/hooks/useAuth';
 import { usePrivateZones } from '@/hooks/usePrivateZones';
 import { useUnits } from '@/hooks/useUnits';
-import { closestPresetIndex, zoneRadiusPresetsFor } from '@/services/units';
-import {
-  ZONE_KIND_ICON,
-  ZONE_KIND_LABEL,
-  ZONE_RADIUS_PRESETS,
-  type ZoneKind,
-} from '@/services/privateZones';
 import {
   getCurrentCoords,
   getLocationPermissionStatus,
   requestLocationPermission,
   type Coords,
 } from '@/services/location';
+import { ZONE_KIND_LABEL, ZONE_RADIUS_PRESETS, type ZoneKind } from '@/services/privateZones';
 import type { PrivateZoneRow } from '@/services/types';
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+import { closestPresetIndex, zoneRadiusPresetsFor } from '@/services/units';
+import { makeStyles } from '@/theme/ThemeProvider';
+import { SCREEN_INSET, Spacing } from '@/theme/spacing';
 
 const KIND_OPTIONS: ZoneKind[] = ['home', 'work', 'custom'];
 
-// ─── ZoneRow ─────────────────────────────────────────────────────────────────
-
-interface ZoneRowProps {
-  zone: PrivateZoneRow;
-  onEdit: () => void;
-  onDelete: () => void;
-}
-
-function ZoneRow({ zone, onEdit, onDelete }: ZoneRowProps) {
-  const { formatRange } = useUnits();
-  return (
-    <View style={zoneRowStyles.wrap}>
-      <View style={zoneRowStyles.info}>
-        <Text style={zoneRowStyles.icon}>{ZONE_KIND_ICON[zone.kind]}</Text>
-        <View style={zoneRowStyles.text}>
-          <Text style={zoneRowStyles.name} numberOfLines={1}>
-            {zone.name}
-          </Text>
-          <Text style={zoneRowStyles.meta}>
-            {ZONE_KIND_LABEL[zone.kind]} · {formatRange(zone.radius_m)} radius
-          </Text>
-        </View>
-      </View>
-      <View style={zoneRowStyles.actions}>
-        <Pressable
-          onPress={onEdit}
-          style={zoneRowStyles.actionBtn}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel={`Edit ${zone.name}`}
-        >
-          <Text style={zoneRowStyles.editLabel}>Edit</Text>
-        </Pressable>
-        <Pressable
-          onPress={onDelete}
-          style={zoneRowStyles.actionBtn}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel={`Delete ${zone.name}`}
-        >
-          <Text style={zoneRowStyles.deleteLabel}>Delete</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-const zoneRowStyles = StyleSheet.create({
-  wrap: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.md,
-    gap: Spacing.sm,
-  },
-  info: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md12,
-  },
-  icon: {
-    fontSize: 24,
-  },
-  text: {
-    flex: 1,
-    gap: 2,
-  },
-  name: {
-    fontSize: FontSize.body,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textPrimary,
-  },
-  meta: {
-    fontSize: FontSize.caption,
-    color: Colors.textSecondary,
-  },
-  actions: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-    paddingTop: Spacing.xs,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-  },
-  actionBtn: {
-    paddingVertical: Spacing.xs,
-  },
-  editLabel: {
-    fontSize: FontSize.bodySmall,
-    fontWeight: FontWeight.medium,
-    color: Colors.primary,
-  },
-  deleteLabel: {
-    fontSize: FontSize.bodySmall,
-    fontWeight: FontWeight.medium,
-    color: Colors.error,
-  },
-});
+const KIND_ICON: Record<ZoneKind, IconName> = {
+  home: 'house.fill',
+  work: 'briefcase.fill',
+  custom: 'mappin.circle.fill',
+};
 
 // ─── ZoneForm ────────────────────────────────────────────────────────────────
 
@@ -160,19 +58,17 @@ interface ZoneFormProps {
   initial: { name: string; kind: ZoneKind; radius_m: number } | null;
   isMutating: boolean;
   onSave: (name: string, kind: ZoneKind, radius_m: number) => void;
-  onCancel: () => void;
 }
 
-function ZoneForm({ initial, isMutating, onSave, onCancel }: ZoneFormProps) {
+function ZoneForm({ initial, isMutating, onSave }: ZoneFormProps) {
+  const styles = useStyles();
   const { system } = useUnits();
   const radiusPresets = zoneRadiusPresetsFor(system);
   const [name, setName] = useState(initial?.name ?? '');
   const [kind, setKind] = useState<ZoneKind>(initial?.kind ?? 'custom');
-  const [radius, setRadius] = useState(
-    initial?.radius_m ?? ZONE_RADIUS_PRESETS[2].value,
-  );
+  const [radius, setRadius] = useState(initial?.radius_m ?? ZONE_RADIUS_PRESETS[2].value);
   const [nameError, setNameError] = useState<string | null>(null);
-  const selectedRadiusIndex = closestPresetIndex(radiusPresets, radius);
+  const selectedRadius = radiusPresets[closestPresetIndex(radiusPresets, radius)]?.value ?? radius;
 
   function validate(): boolean {
     if (name.trim().length === 0) {
@@ -193,186 +89,78 @@ function ZoneForm({ initial, isMutating, onSave, onCancel }: ZoneFormProps) {
   }
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={{ flex: 1 }}
+    <ScrollView
+      contentContainerStyle={styles.form}
+      keyboardShouldPersistTaps="handled"
+      automaticallyAdjustKeyboardInsets
     >
-      <ScrollView
-        contentContainerStyle={formStyles.scroll}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        <Text style={formStyles.sectionLabel}>Name</Text>
-        <AppInput
-          label=""
-          placeholder="e.g. My home"
-          value={name}
-          onChangeText={(t) => {
-            setName(t);
-            if (nameError !== null) setNameError(null);
-          }}
-          error={nameError ?? undefined}
-          maxLength={80}
-          autoCapitalize="words"
-          returnKeyType="done"
+      <TextField
+        label="Name"
+        placeholder="e.g. Home"
+        value={name}
+        onChangeText={(t) => {
+          setName(t);
+          if (nameError !== null) setNameError(null);
+        }}
+        error={nameError}
+        maxLength={80}
+        autoCapitalize="words"
+        returnKeyType="done"
+      />
+
+      <View style={styles.field}>
+        <AppText variant="footnote" color="secondary" weight="medium">
+          Type
+        </AppText>
+        <SegmentedControl<ZoneKind>
+          segments={KIND_OPTIONS.map((k) => ({ value: k, label: ZONE_KIND_LABEL[k] }))}
+          value={kind}
+          onChange={setKind}
+          accessibilityLabel="Zone type"
         />
+      </View>
 
-        <Text style={formStyles.sectionLabel}>Type</Text>
-        <View style={formStyles.chips}>
-          {KIND_OPTIONS.map((k) => (
-            <Pressable
-              key={k}
-              onPress={() => setKind(k)}
-              style={[formStyles.chip, kind === k && formStyles.chipActive]}
-              accessibilityRole="radio"
-              accessibilityState={{ selected: kind === k }}
-              accessibilityLabel={`Zone type: ${ZONE_KIND_LABEL[k]}`}
-            >
-              <Text style={formStyles.chipIcon}>{ZONE_KIND_ICON[k]}</Text>
-              <Text
-                style={[
-                  formStyles.chipLabel,
-                  kind === k && formStyles.chipLabelActive,
-                ]}
-              >
-                {ZONE_KIND_LABEL[k]}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+      <View style={styles.field}>
+        <AppText variant="footnote" color="secondary" weight="medium">
+          Radius
+        </AppText>
+        <SegmentedControl<number>
+          segments={radiusPresets.map((p) => ({ value: p.value, label: p.label }))}
+          value={selectedRadius}
+          onChange={setRadius}
+          accessibilityLabel="Zone radius"
+        />
+        <AppText variant="footnote" color="secondary">
+          RoadPing hides you within this distance of the zone.
+        </AppText>
+      </View>
 
-        <Text style={formStyles.sectionLabel}>Radius</Text>
-        <Text style={formStyles.sectionHint}>
-          RoadPing hides you within this distance of the zone center.
-        </Text>
-        <View style={formStyles.chips}>
-          {radiusPresets.map((p, i) => {
-            const selected = i === selectedRadiusIndex;
-            return (
-              <Pressable
-                key={p.value}
-                onPress={() => setRadius(p.value)}
-                style={[
-                  formStyles.chip,
-                  selected && formStyles.chipActive,
-                ]}
-                accessibilityRole="radio"
-                accessibilityState={{ selected }}
-                accessibilityLabel={`Radius: ${p.label}`}
-              >
-                <Text
-                  style={[
-                    formStyles.chipLabel,
-                    selected && formStyles.chipLabelActive,
-                  ]}
-                >
-                  {p.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        <View style={formStyles.formActions}>
-          <AppButton
-            label={initial !== null ? 'Save Changes' : 'Create Zone'}
-            variant="primary"
-            size="lg"
-            fullWidth
-            loading={isMutating}
-            onPress={handleSave}
-          />
-          <AppButton
-            label="Cancel"
-            variant="ghost"
-            size="md"
-            fullWidth
-            disabled={isMutating}
-            onPress={onCancel}
-          />
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+      <Button
+        label={initial !== null ? 'Save Changes' : 'Create Zone'}
+        size="lg"
+        fullWidth
+        loading={isMutating}
+        onPress={handleSave}
+      />
+    </ScrollView>
   );
 }
 
-const formStyles = StyleSheet.create({
-  scroll: {
-    gap: Spacing.md,
-    paddingBottom: Spacing.xxl,
-  },
-  sectionLabel: {
-    fontSize: FontSize.label,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textTertiary,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginTop: Spacing.sm,
-  },
-  sectionHint: {
-    fontSize: FontSize.caption,
-    color: Colors.textTertiary,
-    marginTop: -Spacing.sm,
-  },
-  chips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Spacing.sm,
-  },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.xs,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md12,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    minHeight: 44,
-  },
-  chipActive: {
-    backgroundColor: Colors.primaryMuted,
-    borderColor: Colors.primary,
-  },
-  chipIcon: {
-    fontSize: 16,
-  },
-  chipLabel: {
-    fontSize: FontSize.body,
-    fontWeight: FontWeight.medium,
-    color: Colors.textSecondary,
-  },
-  chipLabelActive: {
-    color: Colors.primary,
-    fontWeight: FontWeight.semibold,
-  },
-  formActions: {
-    gap: Spacing.sm,
-    marginTop: Spacing.md,
-  },
-});
-
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
-type ScreenMode = 'list' | 'create' | 'edit';
+type FormMode = { kind: 'create'; coords: Coords } | { kind: 'edit'; zone: PrivateZoneRow } | null;
 
 export default function PrivateZonesScreen() {
-  const router = useRouter();
+  const styles = useStyles();
+  const { formatRange } = useUnits();
   const { user, isLoading: authLoading } = useAuth();
-  const { zones, isLoading, isMutating, error, create, update, remove } =
-    usePrivateZones();
+  const { zones, isLoading, isMutating, error, create, update, remove } = usePrivateZones();
 
-  const [mode, setMode] = useState<ScreenMode>('list');
-  const [editingZone, setEditingZone] = useState<PrivateZoneRow | null>(null);
+  const [form, setForm] = useState<FormMode>(null);
   const [locating, setLocating] = useState(false);
-  const [pendingCoords, setPendingCoords] = useState<Coords | null>(null);
 
-  // ── Guards ─────────────────────────────────────────────────────────────────
   if (authLoading) return <LoadingState message="Starting…" />;
   if (user === null) return <Redirect href="/onboarding" />;
-
-  // ── Handlers ───────────────────────────────────────────────────────────────
 
   async function handleCreateTap() {
     setLocating(true);
@@ -384,65 +172,40 @@ export default function PrivateZonesScreen() {
       if (perm !== 'granted') {
         Alert.alert(
           'Location needed',
-          'Allow location access in Settings so RoadPing can create a zone at your current position.',
+          'Allow location access in Settings so RoadPing can create a zone where you are now.',
         );
         return;
       }
       const coords = await getCurrentCoords();
-      setPendingCoords(coords);
-      setMode('create');
+      setForm({ kind: 'create', coords });
     } catch {
-      Alert.alert('Location error', 'Could not get your current location. Try again.');
+      Alert.alert("Couldn't get your location", 'Please try again.');
     } finally {
       setLocating(false);
     }
   }
 
-  async function handleCreateSave(
-    name: string,
-    kind: ZoneKind,
-    radius_m: number,
-  ) {
-    if (pendingCoords === null) return;
+  async function handleSave(name: string, kind: ZoneKind, radius_m: number) {
+    if (form === null) return;
     try {
-      await create({ name, kind, radius_m, coords: pendingCoords });
-      setPendingCoords(null);
-      setMode('list');
+      if (form.kind === 'create') {
+        await create({ name, kind, radius_m, coords: form.coords });
+      } else {
+        await update(form.zone.id, { name, kind, radius_m });
+      }
+      setForm(null);
     } catch (e) {
       Alert.alert(
-        'Could not create zone',
+        form.kind === 'create' ? "Couldn't create zone" : "Couldn't update zone",
         e instanceof Error ? e.message : 'Please try again.',
       );
     }
   }
 
-  function handleEditTap(zone: PrivateZoneRow) {
-    setEditingZone(zone);
-    setMode('edit');
-  }
-
-  async function handleEditSave(
-    name: string,
-    kind: ZoneKind,
-    radius_m: number,
-  ) {
-    if (editingZone === null) return;
-    try {
-      await update(editingZone.id, { name, kind, radius_m });
-      setEditingZone(null);
-      setMode('list');
-    } catch (e) {
-      Alert.alert(
-        'Could not update zone',
-        e instanceof Error ? e.message : 'Please try again.',
-      );
-    }
-  }
-
-  function handleDeleteTap(zone: PrivateZoneRow) {
+  function confirmDelete(zone: PrivateZoneRow) {
     Alert.alert(
-      'Delete zone?',
-      `"${zone.name}" will be removed. You'll be visible in this area again.`,
+      `Delete "${zone.name}"?`,
+      "You'll be visible in this area again when you go live.",
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -453,10 +216,7 @@ export default function PrivateZonesScreen() {
               try {
                 await remove(zone.id);
               } catch (e) {
-                Alert.alert(
-                  'Could not delete zone',
-                  e instanceof Error ? e.message : 'Please try again.',
-                );
+                Alert.alert("Couldn't delete zone", e instanceof Error ? e.message : 'Please try again.');
               }
             })();
           },
@@ -465,245 +225,124 @@ export default function PrivateZonesScreen() {
     );
   }
 
-  function handleCancel() {
-    setPendingCoords(null);
-    setEditingZone(null);
-    setMode('list');
+  function openZoneActions(zone: PrivateZoneRow) {
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          title: zone.name,
+          options: ['Edit', 'Delete Zone', 'Cancel'],
+          destructiveButtonIndex: 1,
+          cancelButtonIndex: 2,
+        },
+        (i) => {
+          if (i === 0) setForm({ kind: 'edit', zone });
+          if (i === 1) confirmDelete(zone);
+        },
+      );
+      return;
+    }
+    Alert.alert(zone.name, undefined, [
+      { text: 'Edit', onPress: () => setForm({ kind: 'edit', zone }) },
+      { text: 'Delete Zone', style: 'destructive', onPress: () => confirmDelete(zone) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   }
 
-  // ── Title for current mode ─────────────────────────────────────────────────
-  const screenTitle =
-    mode === 'create'
-      ? 'Create Zone'
-      : mode === 'edit'
-        ? 'Edit Zone'
-        : 'Private Zones';
-
-  // ─── Render ────────────────────────────────────────────────────────────────
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      {/* ── Header ──────────────────────────────────────────────────────── */}
-      <View style={styles.header}>
-        <Pressable
-          onPress={mode === 'list' ? () => router.back() : handleCancel}
-          style={styles.backBtn}
-          hitSlop={12}
-          accessibilityRole="button"
-          accessibilityLabel={mode === 'list' ? 'Go back' : 'Cancel'}
-        >
-          <Text style={styles.backText}>
-            {mode === 'list' ? '‹ Back' : '✕ Cancel'}
-          </Text>
-        </Pressable>
-        <Text style={styles.headerTitle}>{screenTitle}</Text>
-        <View style={styles.headerRight} />
+    <ScreenScroll>
+      <View style={styles.inset}>
+        <Notice
+          icon="lock.shield.fill"
+          title="RoadPing hides you inside your zones"
+          message="When you're inside a zone, you can't go live and nearby drivers can't see you. No one else can see your zones."
+        />
       </View>
 
-      <View style={styles.body}>
-        {/* ── List mode ─────────────────────────────────────────────────── */}
-        {mode === 'list' && (
-          <ScrollView
-            contentContainerStyle={styles.listScroll}
-            showsVerticalScrollIndicator={false}
-          >
-            {/* Privacy note */}
-            <View style={styles.privacyNote}>
-              <Text style={styles.privacyIcon}>🔒</Text>
-              <View style={styles.privacyText}>
-                <Text style={styles.privacyTitle}>
-                  RoadPing hides you inside private zones.
-                </Text>
-                <Text style={styles.privacyBody}>
-                  When you're inside a zone you own, RoadPing won't start a
-                  live session and you remain invisible to all nearby drivers.
-                  No one else can see your zones.
-                </Text>
-              </View>
-            </View>
+      {error !== null && (
+        <View style={styles.inset}>
+          <Notice tone="danger" title="Couldn't load zones" message={error} />
+        </View>
+      )}
 
-            {/* List error */}
-            {error !== null && (
-              <View style={styles.errorBanner}>
-                <Text style={styles.errorText}>{error}</Text>
-              </View>
-            )}
+      {isLoading && zones.length === 0 && <LoadingState fill={false} message="Loading zones…" />}
 
-            {/* Loading */}
-            {isLoading && (
-              <View style={styles.centerRow}>
-                <ActivityIndicator color={Colors.primary} />
-              </View>
-            )}
+      {!isLoading && zones.length === 0 && error === null && (
+        <EmptyState
+          fill={false}
+          icon="mappin.circle.fill"
+          title="No private zones"
+          message="Add a zone to stay invisible near home, work, or anywhere private."
+        />
+      )}
 
-            {/* Empty state */}
-            {!isLoading && zones.length === 0 && error === null && (
-              <EmptyState
-                fill={false}
-                icon="📍"
-                title="No private zones"
-                message="Create a zone to stay invisible near home, work, or anywhere private."
-              />
-            )}
-
-            {/* Zone list */}
-            {zones.map((zone) => (
-              <ZoneRow
-                key={zone.id}
-                zone={zone}
-                onEdit={() => handleEditTap(zone)}
-                onDelete={() => handleDeleteTap(zone)}
-              />
-            ))}
-
-            {/* Create button */}
-            <AppButton
-              label={locating ? 'Getting location…' : 'Create zone here'}
-              variant="primary"
-              size="lg"
-              fullWidth
-              loading={locating}
-              onPress={() => {
-                void handleCreateTap();
-              }}
+      {zones.length > 0 && (
+        <ListSection>
+          {zones.map((zone) => (
+            <ListRow
+              key={zone.id}
+              icon={KIND_ICON[zone.kind]}
+              iconTone="accent"
+              title={zone.name}
+              subtitle={`${ZONE_KIND_LABEL[zone.kind]} · ${formatRange(zone.radius_m)} radius`}
+              onPress={() => openZoneActions(zone)}
+              accessibilityHint="Edit or delete this zone"
             />
+          ))}
+        </ListSection>
+      )}
 
-            <Text style={styles.footerNote}>
-              Zones are based on your location when you tap "Create zone here."
-              Exact coordinates are never shown or shared.
-            </Text>
-          </ScrollView>
-        )}
-
-        {/* ── Create mode ───────────────────────────────────────────────── */}
-        {mode === 'create' && (
-          <ZoneForm
-            initial={null}
-            isMutating={isMutating}
-            onSave={(n, k, r) => {
-              void handleCreateSave(n, k, r);
-            }}
-            onCancel={handleCancel}
-          />
-        )}
-
-        {/* ── Edit mode ─────────────────────────────────────────────────── */}
-        {mode === 'edit' && editingZone !== null && (
-          <ZoneForm
-            initial={{
-              name: editingZone.name,
-              kind: editingZone.kind,
-              radius_m: editingZone.radius_m,
-            }}
-            isMutating={isMutating}
-            onSave={(n, k, r) => {
-              void handleEditSave(n, k, r);
-            }}
-            onCancel={handleCancel}
-          />
-        )}
+      <View style={styles.inset}>
+        <Button
+          label={locating ? 'Getting Location…' : 'Create Zone Here'}
+          icon="plus"
+          size="lg"
+          fullWidth
+          loading={locating}
+          onPress={() => void handleCreateTap()}
+        />
+        <AppText variant="footnote" color="secondary" align="center" style={styles.footer}>
+          A zone is centered where you are when you tap Create Zone Here.
+          Its exact location is never shown or shared.
+        </AppText>
       </View>
-    </SafeAreaView>
+
+      <Sheet
+        visible={form !== null}
+        onClose={() => setForm(null)}
+        title={form?.kind === 'edit' ? 'Edit Zone' : 'New Zone'}
+        maxHeight={0.9}
+      >
+        {form !== null && (
+          <ZoneForm
+            key={form.kind === 'edit' ? form.zone.id : 'create'}
+            initial={
+              form.kind === 'edit'
+                ? { name: form.zone.name, kind: form.zone.kind, radius_m: form.zone.radius_m }
+                : null
+            }
+            isMutating={isMutating}
+            onSave={(n, k, r) => void handleSave(n, k, r)}
+          />
+        )}
+      </Sheet>
+    </ScreenScroll>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  backBtn: {
-    minWidth: 72,
-  },
-  backText: {
-    fontSize: FontSize.body,
-    color: Colors.primary,
-    fontWeight: FontWeight.medium,
-  },
-  headerTitle: {
-    flex: 1,
-    fontSize: FontSize.body,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textPrimary,
-    textAlign: 'center',
-  },
-  headerRight: {
-    minWidth: 72,
-  },
-
-  body: {
-    flex: 1,
-    paddingHorizontal: Spacing.md,
-    paddingTop: Spacing.md,
-  },
-
-  listScroll: {
-    gap: Spacing.md,
-    paddingBottom: Spacing.xxl,
-  },
-
-  // Privacy note
-  privacyNote: {
-    flexDirection: 'row',
+const useStyles = makeStyles(() => ({
+  inset: {
+    paddingHorizontal: SCREEN_INSET,
     gap: Spacing.md12,
-    backgroundColor: Colors.surfaceElevated,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.md,
   },
-  privacyIcon: {
-    fontSize: 20,
-    marginTop: 1,
+  footer: {
+    paddingHorizontal: Spacing.md,
   },
-  privacyText: {
-    flex: 1,
-    gap: Spacing.xs,
+  form: {
+    paddingHorizontal: Spacing.md20,
+    paddingBottom: Spacing.md,
+    gap: Spacing.lg,
   },
-  privacyTitle: {
-    fontSize: FontSize.bodySmall,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textPrimary,
+  field: {
+    gap: Spacing.sm,
   },
-  privacyBody: {
-    fontSize: FontSize.caption,
-    color: Colors.textSecondary,
-    lineHeight: FontSize.caption * 1.55,
-  },
-
-  // Error
-  errorBanner: {
-    backgroundColor: Colors.errorMuted,
-    borderRadius: Radius.sm,
-    borderWidth: 1,
-    borderColor: Colors.error,
-    padding: Spacing.md,
-  },
-  errorText: {
-    fontSize: FontSize.bodySmall,
-    color: Colors.error,
-    textAlign: 'center',
-  },
-
-  centerRow: {
-    alignItems: 'center',
-    paddingVertical: Spacing.xl,
-  },
-
-  footerNote: {
-    fontSize: FontSize.caption,
-    color: Colors.textTertiary,
-    textAlign: 'center',
-    lineHeight: FontSize.caption * 1.5,
-    paddingHorizontal: Spacing.sm,
-  },
-});
+}));

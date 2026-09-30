@@ -1,12 +1,12 @@
 /**
- * ErrorState — full-area error display with optional retry.
+ * ErrorState — a failed load with a way to retry.
  */
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { Colors } from '@/theme/colors';
-import { FontSize, FontWeight } from '@/theme/typography';
-import { Radius, Spacing } from '@/theme/spacing';
-import { AppButton } from './AppButton';
+import { View } from 'react-native';
+
+import { AppText, Button, Icon } from '@/components/ui';
+import { makeStyles, useTheme } from '@/theme/ThemeProvider';
+import { Spacing } from '@/theme/spacing';
 
 interface ErrorStateProps {
   title?: string;
@@ -20,72 +20,45 @@ export function ErrorState({
   title = 'Something went wrong',
   message,
   onRetry,
-  retryLabel = 'Try again',
+  retryLabel = 'Try Again',
   fill = true,
 }: ErrorStateProps) {
+  const { colors } = useTheme();
+  const styles = useStyles();
   return (
-    <View
-      style={[styles.container, fill && styles.fill]}
-      accessibilityRole="alert"
-    >
-      <View style={styles.iconBadge}>
-        <Text style={styles.emoji}>⚠️</Text>
-      </View>
-      <Text style={styles.title}>{title}</Text>
-      {message != null && (
-        <Text style={styles.message}>{message}</Text>
+    <View style={[styles.container, fill && styles.fill]} accessibilityRole="alert">
+      <Icon name="exclamationmark.triangle.fill" size={36} color={colors.warning} />
+      <AppText variant="title3" align="center">
+        {title}
+      </AppText>
+      {message !== undefined && (
+        <AppText variant="subheadline" color="secondary" align="center" style={styles.message}>
+          {message}
+        </AppText>
       )}
-      {onRetry != null && (
-        <AppButton
-          label={retryLabel}
-          variant="secondary"
-          size="sm"
-          onPress={onRetry}
-          style={styles.retryButton}
-        />
+      {onRetry !== undefined && (
+        <Button label={retryLabel} variant="secondary" size="sm" onPress={onRetry} style={styles.action} />
       )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((t) => ({
   container: {
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.sm,
-    padding: Spacing.xl,
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.xl40,
   },
   fill: {
     flex: 1,
-    backgroundColor: Colors.background,
-  },
-  iconBadge: {
-    width: 72,
-    height: 72,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.errorMuted,
-    borderWidth: 1,
-    borderColor: Colors.error,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Spacing.sm,
-  },
-  emoji: {
-    fontSize: 32,
-  },
-  title: {
-    fontSize: FontSize.subheading,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textPrimary,
-    textAlign: 'center',
+    backgroundColor: t.colors.background,
   },
   message: {
-    fontSize: FontSize.body,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: FontSize.body * 1.5,
+    maxWidth: 300,
   },
-  retryButton: {
+  action: {
     marginTop: Spacing.md,
   },
-});
+}));

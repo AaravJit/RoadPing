@@ -1,120 +1,66 @@
 /**
- * RoadPing typography scale.
+ * Typography — the iOS text-style ramp (Large Title → Caption 2).
  *
- * Uses system fonts (SF Pro on iOS, Roboto on Android) for performance and
- * legibility in bright conditions. All sizes in dp/pt.
+ * Uses the system font (San Francisco) through React Native's default font
+ * family, so iOS picks SF Text / SF Display optical sizes automatically.
+ * Hierarchy comes from size and weight, not from uppercase or tracking.
  *
- * Driving-safety note: body text is 16 px minimum. Labels that appear on
- * the main Drive screen use 18–20 px for at-a-glance readability.
+ * Dynamic Type: React Native scales `fontSize` and `lineHeight` with the
+ * user's text size. Each style carries a `maxScale` so dense chrome (the map
+ * header, the Voice Dock) grows with the user's setting but stops before it
+ * breaks the layout; reading screens scale much further.
  */
-import { Platform } from 'react-native';
+import type { TextStyle } from 'react-native';
 
-const FONT_FAMILY_BASE = Platform.select({
-  ios: 'System',
-  android: 'Roboto',
-  default: 'System',
-});
-
-export const FontSize = {
-  /** 11 px — micro labels, timestamps */
-  micro: 11,
-  /** 12 px — captions */
-  caption: 12,
-  /** 13 px — secondary labels */
-  label: 13,
-  /** 15 px — body small */
-  bodySmall: 15,
-  /** 16 px — default body */
-  body: 16,
-  /** 18 px — body large, driving-safe minimum for interactive */
-  bodyLarge: 18,
-  /** 20 px — subheadings */
-  subheading: 20,
-  /** 24 px — headings */
-  heading: 24,
-  /** 28 px — large headings */
-  headingLarge: 28,
-  /** 36 px — display / hero text */
-  display: 36,
-  /** 48 px — jumbo / big number display */
-  jumbo: 48,
-} as const;
+export type TextVariant =
+  | 'largeTitle'
+  | 'title1'
+  | 'title2'
+  | 'title3'
+  | 'headline'
+  | 'body'
+  | 'callout'
+  | 'subheadline'
+  | 'footnote'
+  | 'caption1'
+  | 'caption2';
 
 export const FontWeight = {
-  regular: '400' as const,
-  medium: '500' as const,
-  semibold: '600' as const,
-  bold: '700' as const,
-  extrabold: '800' as const,
-} as const;
+  regular: '400',
+  medium: '500',
+  semibold: '600',
+  bold: '700',
+  heavy: '800',
+} as const satisfies Record<string, TextStyle['fontWeight']>;
 
-export const LineHeight = {
-  tight: 1.2,
-  normal: 1.4,
-  relaxed: 1.6,
-} as const;
+type VariantSpec = Required<Pick<TextStyle, 'fontSize' | 'lineHeight' | 'fontWeight'>> & {
+  letterSpacing?: number;
+  /** Largest Dynamic Type multiplier this style should honor. */
+  maxScale: number;
+};
 
-/** Pre-composed text style helpers */
-export const TextStyles = {
-  /** Hero display — app name, big labels */
-  display: {
-    fontFamily: FONT_FAMILY_BASE,
-    fontSize: FontSize.display,
-    fontWeight: FontWeight.bold,
-    lineHeight: FontSize.display * LineHeight.tight,
-  },
-  headingLarge: {
-    fontFamily: FONT_FAMILY_BASE,
-    fontSize: FontSize.headingLarge,
-    fontWeight: FontWeight.bold,
-    lineHeight: FontSize.headingLarge * LineHeight.tight,
-  },
-  heading: {
-    fontFamily: FONT_FAMILY_BASE,
-    fontSize: FontSize.heading,
-    fontWeight: FontWeight.semibold,
-    lineHeight: FontSize.heading * LineHeight.tight,
-  },
-  subheading: {
-    fontFamily: FONT_FAMILY_BASE,
-    fontSize: FontSize.subheading,
-    fontWeight: FontWeight.semibold,
-    lineHeight: FontSize.subheading * LineHeight.normal,
-  },
-  bodyLarge: {
-    fontFamily: FONT_FAMILY_BASE,
-    fontSize: FontSize.bodyLarge,
-    fontWeight: FontWeight.regular,
-    lineHeight: FontSize.bodyLarge * LineHeight.relaxed,
-  },
-  body: {
-    fontFamily: FONT_FAMILY_BASE,
-    fontSize: FontSize.body,
-    fontWeight: FontWeight.regular,
-    lineHeight: FontSize.body * LineHeight.relaxed,
-  },
-  bodyMedium: {
-    fontFamily: FONT_FAMILY_BASE,
-    fontSize: FontSize.body,
-    fontWeight: FontWeight.medium,
-    lineHeight: FontSize.body * LineHeight.relaxed,
-  },
-  label: {
-    fontFamily: FONT_FAMILY_BASE,
-    fontSize: FontSize.label,
-    fontWeight: FontWeight.medium,
-    lineHeight: FontSize.label * LineHeight.normal,
-  },
-  caption: {
-    fontFamily: FONT_FAMILY_BASE,
-    fontSize: FontSize.caption,
-    fontWeight: FontWeight.regular,
-    lineHeight: FontSize.caption * LineHeight.normal,
-  },
-  micro: {
-    fontFamily: FONT_FAMILY_BASE,
-    fontSize: FontSize.micro,
-    fontWeight: FontWeight.regular,
-    lineHeight: FontSize.micro * LineHeight.normal,
-  },
-} as const;
+export const TextVariants: Record<TextVariant, VariantSpec> = {
+  largeTitle: { fontSize: 34, lineHeight: 41, fontWeight: FontWeight.bold, letterSpacing: 0.37, maxScale: 1.6 },
+  title1: { fontSize: 28, lineHeight: 34, fontWeight: FontWeight.bold, letterSpacing: 0.36, maxScale: 1.7 },
+  title2: { fontSize: 22, lineHeight: 28, fontWeight: FontWeight.bold, letterSpacing: 0.35, maxScale: 1.8 },
+  title3: { fontSize: 20, lineHeight: 25, fontWeight: FontWeight.semibold, letterSpacing: 0.38, maxScale: 2 },
+  headline: { fontSize: 17, lineHeight: 22, fontWeight: FontWeight.semibold, letterSpacing: -0.41, maxScale: 2 },
+  body: { fontSize: 17, lineHeight: 22, fontWeight: FontWeight.regular, letterSpacing: -0.41, maxScale: 2.2 },
+  callout: { fontSize: 16, lineHeight: 21, fontWeight: FontWeight.regular, letterSpacing: -0.32, maxScale: 2.2 },
+  subheadline: { fontSize: 15, lineHeight: 20, fontWeight: FontWeight.regular, letterSpacing: -0.24, maxScale: 2.2 },
+  footnote: { fontSize: 13, lineHeight: 18, fontWeight: FontWeight.regular, letterSpacing: -0.08, maxScale: 2.2 },
+  caption1: { fontSize: 12, lineHeight: 16, fontWeight: FontWeight.regular, letterSpacing: 0, maxScale: 2 },
+  caption2: { fontSize: 11, lineHeight: 13, fontWeight: FontWeight.regular, letterSpacing: 0.07, maxScale: 2 },
+};
+
+/**
+ * Tighter scale cap for controls layered over the live map. The driver must
+ * still read them at a glance, but they cannot grow into the map itself.
+ */
+export const DRIVE_CHROME_MAX_SCALE = 1.35;
+
+/** Plain TextStyle for a variant — for the rare component that can't use AppText. */
+export function textStyle(variant: TextVariant): TextStyle {
+  const { maxScale: _maxScale, ...style } = TextVariants[variant];
+  return style;
+}

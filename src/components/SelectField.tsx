@@ -1,25 +1,14 @@
 /**
- * SelectField — dark dropdown/selector (Phase 16D).
- *
- * A tappable field that opens a bottom-sheet list of options (optionally
- * searchable). Replaces freeform text + native pickers for vehicle setup so
- * choices are fast, large-touch, and consistent with the cockpit theme.
+ * SelectField — a labelled field that opens a sheet of options (optionally
+ * searchable), for long pick-lists such as make, model, year and color.
  */
 import React, { useMemo, useState } from 'react';
-import {
-  FlatList,
-  Modal,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { FlatList, Pressable, TextInput, View } from 'react-native';
 
-import { useTheme } from '@/theme/ThemeProvider';
-import { Colors } from '@/theme/colors';
-import { FontSize, FontWeight } from '@/theme/typography';
+import { AppText, Icon, Sheet } from '@/components/ui';
+import { makeStyles, useTheme } from '@/theme/ThemeProvider';
 import { MIN_TOUCH_TARGET, Radius, Spacing } from '@/theme/spacing';
+import { textStyle } from '@/theme/typography';
 
 export interface SelectOption {
   label: string;
@@ -45,9 +34,11 @@ export function SelectField({
   error,
   searchable = false,
 }: SelectFieldProps) {
-  const { accent } = useTheme();
+  const { colors, accent } = useTheme();
+  const styles = useStyles();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const hasError = error != null && error.length > 0;
 
   const selectedLabel = options.find((o) => o.value === value)?.label ?? null;
 
@@ -64,183 +55,147 @@ export function SelectField({
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.label}>{label}</Text>
+      <AppText variant="footnote" color="secondary" weight="medium">
+        {label}
+      </AppText>
       <Pressable
-        style={[styles.field, error != null && styles.fieldError]}
+        style={({ pressed }) => [
+          styles.field,
+          hasError && { borderColor: colors.danger, borderWidth: 1 },
+          pressed && { backgroundColor: colors.fill },
+        ]}
         onPress={() => setOpen(true)}
         accessibilityRole="button"
-        accessibilityLabel={`${label}: ${selectedLabel ?? placeholder}`}
+        accessibilityLabel={`${label}, ${selectedLabel ?? 'not set'}`}
+        accessibilityHint="Opens a list to choose from"
       >
-        <Text
-          style={[styles.value, selectedLabel == null && styles.placeholder]}
+        <AppText
+          variant="body"
+          color={selectedLabel === null ? 'tertiary' : 'primary'}
           numberOfLines={1}
+          style={styles.flex}
         >
           {selectedLabel ?? placeholder}
-        </Text>
-        <Text style={styles.chevron}>⌄</Text>
+        </AppText>
+        <Icon name="chevron.down" size={13} color={colors.textTertiary} />
       </Pressable>
-      {error != null && <Text style={styles.errorText}>{error}</Text>}
+      {hasError && (
+        <AppText variant="footnote" color="danger" accessibilityRole="alert">
+          {error}
+        </AppText>
+      )}
 
-      <Modal
-        visible={open}
-        animationType="slide"
-        transparent
-        onRequestClose={close}
-      >
-        <Pressable style={styles.backdrop} onPress={close} />
-        <View style={styles.sheet}>
-          <View style={styles.sheetHandle} />
-          <Text style={styles.sheetTitle}>{label}</Text>
-          {searchable && (
+      <Sheet visible={open} onClose={close} title={label} maxHeight={0.8}>
+        {searchable && (
+          <View style={styles.searchWrap}>
+            <Icon name="magnifyingglass" size={15} color={colors.textTertiary} />
             <TextInput
               style={styles.search}
-              placeholder="Search…"
-              placeholderTextColor={Colors.textTertiary}
               value={query}
               onChangeText={setQuery}
-              autoCapitalize="none"
+              placeholder="Search"
+              placeholderTextColor={colors.textTertiary}
+              selectionColor={accent.fill}
               autoCorrect={false}
+              clearButtonMode="while-editing"
+              accessibilityLabel={`Search ${label}`}
             />
-          )}
-          <FlatList
-            data={filtered}
-            keyExtractor={(o) => o.value}
-            keyboardShouldPersistTaps="handled"
-            style={styles.list}
-            renderItem={({ item }) => {
-              const sel = item.value === value;
-              return (
-                <Pressable
-                  style={styles.option}
-                  onPress={() => {
-                    onChange(item.value);
-                    close();
-                  }}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected: sel }}
-                >
-                  <Text
-                    style={[
-                      styles.optionLabel,
-                      sel && { color: accent.accent, fontWeight: FontWeight.semibold },
-                    ]}
-                  >
-                    {item.label}
-                  </Text>
-                  {sel && (
-                    <Text style={[styles.optionCheck, { color: accent.accent }]}>✓</Text>
-                  )}
-                </Pressable>
-              );
-            }}
-          />
-        </View>
-      </Modal>
+          </View>
+        )}
+        <FlatList
+          data={filtered}
+          keyExtractor={(o) => o.value}
+          keyboardShouldPersistTaps="handled"
+          automaticallyAdjustKeyboardInsets
+          contentContainerStyle={styles.list}
+          ItemSeparatorComponent={() => <View style={styles.sep} />}
+          ListEmptyComponent={
+            <AppText variant="body" color="secondary" align="center" style={styles.empty}>
+              No matches
+            </AppText>
+          }
+          renderItem={({ item }) => {
+            const selected = item.value === value;
+            return (
+              <Pressable
+                style={({ pressed }) => [styles.option, pressed && { backgroundColor: colors.fill }]}
+                onPress={() => {
+                  onChange(item.value);
+                  close();
+                }}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                accessibilityLabel={item.label}
+              >
+                <AppText variant="body" weight={selected ? 'semibold' : 'regular'} style={styles.flex}>
+                  {item.label}
+                </AppText>
+                {selected && <Icon name="checkmark" size={16} color={accent.text} weight="bold" />}
+              </Pressable>
+            );
+          }}
+        />
+      </Sheet>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((t) => ({
   wrap: {
-    gap: Spacing.sm,
-  },
-  label: {
-    fontSize: FontSize.label,
-    fontWeight: FontWeight.medium,
-    color: Colors.textSecondary,
+    gap: Spacing.xs + 2,
   },
   field: {
+    minHeight: MIN_TOUCH_TARGET + 6,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    minHeight: MIN_TOUCH_TARGET,
+    gap: Spacing.sm,
     paddingHorizontal: Spacing.md,
+    borderRadius: Radius.md,
+    borderCurve: 'continuous',
+    backgroundColor: t.colors.surface,
+    borderWidth: t.a11y.increaseContrast ? 1 : 0,
+    borderColor: t.colors.separatorStrong,
+  },
+  flex: {
+    flex: 1,
+  },
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.sm,
+    paddingHorizontal: Spacing.md12,
+    minHeight: 40,
     borderRadius: Radius.sm,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.surface,
-  },
-  fieldError: {
-    borderColor: Colors.error,
-  },
-  value: {
-    flex: 1,
-    fontSize: FontSize.body,
-    color: Colors.textPrimary,
-  },
-  placeholder: {
-    color: Colors.textTertiary,
-  },
-  chevron: {
-    fontSize: FontSize.subheading,
-    color: Colors.textTertiary,
-    marginLeft: Spacing.sm,
-  },
-  errorText: {
-    fontSize: FontSize.caption,
-    color: Colors.error,
-  },
-
-  backdrop: {
-    flex: 1,
-    backgroundColor: Colors.overlay,
-  },
-  sheet: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    maxHeight: '75%',
-    backgroundColor: Colors.surfaceElevated,
-    borderTopLeftRadius: Radius.xl,
-    borderTopRightRadius: Radius.xl,
-    paddingTop: Spacing.sm,
-    paddingBottom: Spacing.xl,
-    paddingHorizontal: Spacing.md,
-  },
-  sheetHandle: {
-    alignSelf: 'center',
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: Colors.borderFocused,
-    marginBottom: Spacing.md,
-  },
-  sheetTitle: {
-    fontSize: FontSize.subheading,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textPrimary,
-    marginBottom: Spacing.md,
+    backgroundColor: t.colors.fill,
   },
   search: {
-    minHeight: MIN_TOUCH_TARGET,
-    paddingHorizontal: Spacing.md,
-    borderRadius: Radius.sm,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.surface,
-    color: Colors.textPrimary,
-    fontSize: FontSize.body,
-    marginBottom: Spacing.sm,
+    ...textStyle('body'),
+    flex: 1,
+    color: t.colors.textPrimary,
+    paddingVertical: Spacing.sm,
   },
   list: {
-    flexGrow: 0,
+    marginHorizontal: Spacing.md,
+    borderRadius: Radius.md,
+    overflow: 'hidden',
+    backgroundColor: t.colors.surface,
   },
   option: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     minHeight: MIN_TOUCH_TARGET,
-    paddingHorizontal: Spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    gap: Spacing.sm,
   },
-  optionLabel: {
-    fontSize: FontSize.body,
-    color: Colors.textPrimary,
+  sep: {
+    height: 0.5,
+    marginLeft: Spacing.md,
+    backgroundColor: t.colors.separator,
   },
-  optionCheck: {
-    fontSize: FontSize.body,
-    fontWeight: FontWeight.bold,
+  empty: {
+    padding: Spacing.lg,
   },
-});
+}));

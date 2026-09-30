@@ -65,21 +65,10 @@ a:hover { text-decoration: underline; }
 }
 .brand:hover { text-decoration: none; }
 .brand .ping { color: var(--primary); }
-.logo-dot {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--primary-muted);
-  border: 2px solid var(--primary);
-  position: relative;
+.logo-mark {
+  width: 24px;
+  height: 24px;
   flex: none;
-}
-.logo-dot::after {
-  content: "";
-  position: absolute;
-  inset: 5px;
-  border-radius: 50%;
-  background: var(--primary);
 }
 .nav a {
   color: var(--text-secondary);
@@ -94,13 +83,12 @@ a:hover { text-decoration: underline; }
   text-align: center;
   padding: 72px 0 40px;
 }
-.hero .logo-dot {
-  width: 64px;
-  height: 64px;
-  border-width: 4px;
+.hero .logo-mark {
+  display: block;
+  width: 72px;
+  height: 72px;
   margin: 0 auto 22px;
 }
-.hero .logo-dot::after { inset: 14px; }
 .hero h1 {
   font-size: 44px;
   line-height: 1.1;

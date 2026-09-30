@@ -1,191 +1,177 @@
 /**
- * HoldToTalkButton — large press-and-hold voice button for the Drive screen.
+ * HoldToTalkButton — the physical-feeling push-to-talk control.
  *
- * Driving-safe: HOLD_TO_TALK_SIZE (120 dp) circular target, single gesture,
- * loud visual states (idle → arming → speaking).
+ *   ready     accent fill, mic glyph, "Hold to Talk"
+ *   pressed   presses in (scale + darker fill) the instant a finger lands
+ *   talking   live red with a single expanding ring; "Talking"
+ *   disabled  neutral well, dimmed glyph — plus the reason, from the caller
  *
- * Phase 6: rendering + animation only. Audio capture starts in Phase 7
- * inside `src/services/voice.ts`.
+ * State text changes with the fill, so transmitting is never shown by color
+ * alone. Haptics: the voice hook fires an impact on press; this control adds
+ * a firmer tick when transmission is actually confirmed. Reduce Motion keeps
+ * the press-in (functional) and replaces the pulsing ring with a static one.
  */
 import React, { useEffect, useRef } from 'react';
-import {
-  Animated,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { Colors } from '@/theme/colors';
-import { useTheme } from '@/theme/ThemeProvider';
-import { FontSize, FontWeight } from '@/theme/typography';
-import { HOLD_TO_TALK_SIZE, Spacing } from '@/theme/spacing';
+import { Animated, Pressable, View } from 'react-native';
+
+import { AppText, Icon, haptic } from '@/components/ui';
 import type { HoldState } from '@/hooks/useHoldToTalk';
+import { makeStyles, useTheme } from '@/theme/ThemeProvider';
+import { HOLD_TO_TALK_SIZE } from '@/theme/spacing';
 
 interface HoldToTalkButtonProps {
   state: HoldState;
   disabled: boolean;
   onPressIn: () => void;
   onPressOut: () => void;
+  /** Who hears you, for the VoiceOver hint ("nearby drivers", "the room"). */
+  audience?: string;
+  size?: number;
 }
+
+const LABEL: Record<HoldState, string> = {
+  idle: 'Hold to Talk',
+  arming: 'Connecting',
+  speaking: 'Talking',
+  releasing: 'Ending',
+};
 
 export function HoldToTalkButton({
   state,
   disabled,
   onPressIn,
   onPressOut,
+  audience = 'nearby drivers',
+  size = HOLD_TO_TALK_SIZE,
 }: HoldToTalkButtonProps) {
-  const { accent } = useTheme();
-  const scale = useRef(new Animated.Value(1)).current;
-  const ringScale = useRef(new Animated.Value(1)).current;
-  const ringOpacity = useRef(new Animated.Value(0)).current;
+  const { colors, accent, a11y } = useTheme();
+  const styles = useStyles();
+  const press = useRef(new Animated.Value(0)).current;
+  const ring = useRef(new Animated.Value(0)).current;
 
   const speaking = state === 'speaking';
-  const pending = state === 'arming' || state === 'releasing';
+  const engaged = state !== 'idle';
 
-  // Scale the button down when held; bounce back on release.
+  // Press-in is functional feedback — kept under Reduce Motion, just faster.
   useEffect(() => {
-    Animated.spring(scale, {
-      toValue: pending || speaking ? 0.95 : 1,
+    Animated.spring(press, {
+      toValue: engaged ? 1 : 0,
       useNativeDriver: true,
-      speed: 18,
-      bounciness: 6,
+      speed: a11y.reduceMotion ? 60 : 32,
+      bounciness: engaged || a11y.reduceMotion ? 0 : 5,
     }).start();
-  }, [pending, speaking, scale]);
+  }, [engaged, press, a11y.reduceMotion]);
 
-  // Pulsing ring while speaking.
+  // One calm expanding ring while transmitting.
   useEffect(() => {
     if (!speaking) {
-      ringScale.setValue(1);
-      ringOpacity.setValue(0);
+      ring.stopAnimation();
+      ring.setValue(0);
+      return;
+    }
+    haptic.transmitStart();
+    if (a11y.reduceMotion) {
+      ring.setValue(0.5);
       return;
     }
     const loop = Animated.loop(
-      Animated.sequence([
-        Animated.parallel([
-          Animated.timing(ringScale, {
-            toValue: 1.5,
-            duration: 900,
-            useNativeDriver: true,
-          }),
-          Animated.timing(ringOpacity, {
-            toValue: 0,
-            duration: 900,
-            useNativeDriver: true,
-          }),
-        ]),
-        Animated.parallel([
-          Animated.timing(ringScale, {
-            toValue: 1,
-            duration: 0,
-            useNativeDriver: true,
-          }),
-          Animated.timing(ringOpacity, {
-            toValue: 0.7,
-            duration: 0,
-            useNativeDriver: true,
-          }),
-        ]),
-      ]),
+      Animated.timing(ring, { toValue: 1, duration: 1400, useNativeDriver: true }),
     );
     loop.start();
     return () => loop.stop();
-  }, [speaking, ringScale, ringOpacity]);
+  }, [speaking, ring, a11y.reduceMotion]);
 
-  const label =
-    state === 'speaking'
-      ? 'SPEAKING'
-      : state === 'arming'
-        ? 'STARTING…'
-        : state === 'releasing'
-          ? 'STOPPING…'
-          : 'HOLD TO TALK';
+  const fill = disabled
+    ? colors.fill
+    : speaking
+      ? colors.live
+      : engaged
+        ? accent.fillPressed
+        : accent.fill;
+  const fg = disabled ? colors.textTertiary : speaking ? colors.textOnColor : accent.onFill;
+
+  const ringStyle = a11y.reduceMotion
+    ? { opacity: speaking ? 0.5 : 0, transform: [{ scale: 1.14 }] }
+    : {
+        opacity: ring.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0] }),
+        transform: [{ scale: ring.interpolate({ inputRange: [0, 1], outputRange: [1, 1.45] }) }],
+      };
 
   return (
-    <View style={styles.wrap} pointerEvents={disabled ? 'none' : 'auto'}>
+    <View style={[styles.wrap, { width: size, height: size }]}>
       <Animated.View
         pointerEvents="none"
         style={[
           styles.ring,
-          { transform: [{ scale: ringScale }], opacity: ringOpacity },
+          { width: size, height: size, borderRadius: size / 2, borderColor: colors.live },
+          ringStyle,
         ]}
       />
       <Pressable
         onPressIn={onPressIn}
         onPressOut={onPressOut}
         disabled={disabled}
+        hitSlop={12}
         accessibilityRole="button"
         accessibilityLabel="Hold to talk"
-        accessibilityState={{ disabled, busy: pending, selected: speaking }}
-        hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+        accessibilityHint={
+          disabled
+            ? undefined
+            : `Touch and hold to talk to ${audience}. Release to stop.`
+        }
+        accessibilityValue={{ text: disabled ? 'Unavailable' : LABEL[state] }}
+        accessibilityState={{ disabled, selected: speaking, busy: state === 'arming' }}
       >
         <Animated.View
           style={[
             styles.button,
-            // Idle/ready accent is themed; speaking & disabled override below.
-            { backgroundColor: accent.accent, borderColor: accent.accentDim },
-            speaking && styles.buttonSpeaking,
-            disabled && styles.buttonDisabled,
-            { transform: [{ scale }] },
+            {
+              width: size,
+              height: size,
+              borderRadius: size / 2,
+              backgroundColor: fill,
+              transform: [
+                { scale: press.interpolate({ inputRange: [0, 1], outputRange: [1, 0.93] }) },
+              ],
+            },
+            !disabled && styles.raised,
           ]}
         >
-          <Text style={styles.icon}>🎙</Text>
-          <Text
-            style={[
-              styles.label,
-              { color: accent.onAccent },
-              speaking && styles.labelSpeaking,
-            ]}
+          <Icon name="mic.fill" size={size * 0.3} color={fg} weight="semibold" />
+          <AppText
+            variant="caption1"
+            weight="bold"
+            align="center"
+            numberOfLines={1}
+            maxScale={1.15}
+            style={{ color: fg }}
           >
-            {label}
-          </Text>
+            {LABEL[state]}
+          </AppText>
         </Animated.View>
       </Pressable>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((t) => ({
   wrap: {
     alignItems: 'center',
     justifyContent: 'center',
-    padding: Spacing.md,
   },
   ring: {
     position: 'absolute',
-    width: HOLD_TO_TALK_SIZE,
-    height: HOLD_TO_TALK_SIZE,
-    borderRadius: HOLD_TO_TALK_SIZE / 2,
-    backgroundColor: Colors.liveGlow,
+    borderWidth: 4,
   },
   button: {
-    width: HOLD_TO_TALK_SIZE,
-    height: HOLD_TO_TALK_SIZE,
-    borderRadius: HOLD_TO_TALK_SIZE / 2,
-    backgroundColor: Colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 4,
-    borderColor: Colors.primaryDim,
+    gap: 4,
   },
-  buttonSpeaking: {
-    backgroundColor: Colors.live,
-    borderColor: Colors.live,
+  raised: {
+    shadowColor: t.colors.shadow,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: t.scheme === 'dark' ? 0.5 : 0.22,
+    shadowRadius: 12,
   },
-  buttonDisabled: {
-    backgroundColor: Colors.surface,
-    borderColor: Colors.border,
-  },
-  icon: {
-    fontSize: 32,
-  },
-  label: {
-    marginTop: Spacing.xs,
-    fontSize: FontSize.label,
-    fontWeight: FontWeight.bold,
-    color: Colors.textInverse,
-    letterSpacing: 1,
-  },
-  labelSpeaking: {
-    color: Colors.textPrimary,
-  },
-});
+}));

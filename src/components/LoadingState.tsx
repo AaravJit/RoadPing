@@ -1,54 +1,48 @@
 /**
- * LoadingState — full-area loading indicator.
- * Used when a screen or section is waiting for data.
+ * LoadingState — calm, centered progress for a screen or section.
  */
 import React from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { Colors } from '@/theme/colors';
-import { FontSize } from '@/theme/typography';
+import { ActivityIndicator, View } from 'react-native';
+
+import { AppText } from '@/components/ui';
+import { makeStyles, useTheme } from '@/theme/ThemeProvider';
 import { Spacing } from '@/theme/spacing';
 
 interface LoadingStateProps {
-  /** Optional message shown below the spinner */
   message?: string;
-  /** Fill the parent container */
+  /** Fill the parent and paint the screen background. */
   fill?: boolean;
-  size?: 'small' | 'large';
 }
 
-export function LoadingState({
-  message,
-  fill = true,
-  size = 'large',
-}: LoadingStateProps) {
+export function LoadingState({ message, fill = true }: LoadingStateProps) {
+  const { colors } = useTheme();
+  const styles = useStyles();
   return (
     <View
       style={[styles.container, fill && styles.fill]}
+      accessible
       accessibilityRole="progressbar"
-      accessibilityLabel={message ?? 'Loading…'}
+      accessibilityLabel={message ?? 'Loading'}
     >
-      <ActivityIndicator size={size} color={Colors.primary} />
-      {message != null && (
-        <Text style={styles.message}>{message}</Text>
+      <ActivityIndicator color={colors.textSecondary} />
+      {message !== undefined && (
+        <AppText variant="subheadline" color="secondary" align="center">
+          {message}
+        </AppText>
       )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((t) => ({
   container: {
     alignItems: 'center',
     justifyContent: 'center',
-    gap: Spacing.md,
+    gap: Spacing.md12,
     padding: Spacing.xl,
   },
   fill: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: t.colors.background,
   },
-  message: {
-    fontSize: FontSize.body,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-  },
-});
+}));

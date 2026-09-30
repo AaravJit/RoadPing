@@ -1,239 +1,190 @@
 /**
- * app/welcome.tsx — first-time education (Phase 17).
+ * app/welcome.tsx — first-time introduction and permission priming.
  *
- * Three short, holographic-style cards shown once to a signed-in user before
- * profile setup. Flow is Next/arrow with dot indicators; "Skip" is a small,
- * clearly-secondary text action (never equal weight to Next). Finishing or
- * skipping marks the AsyncStorage flag and hands back to the route gate, which
- * continues to profile → vehicle → theme → Drive.
+ * Shown once to a signed-in user before profile setup:
+ *   1. You choose when you're visible.
+ *   2. Location — explained first, then the system prompt only if the user
+ *      taps Allow. "Not Now" moves on without prompting.
+ *   3. Microphone — same pattern.
+ *
+ * Finishing or skipping marks the flag and hands back to the route gate,
+ * which continues to profile → vehicle → appearance → Drive. Nothing here is
+ * required: Drive asks again, in context, if a permission is still missing.
  *
  * App Store-safe copy only — no cops/checkpoints/racing/speeding/surveillance.
  */
-import React, { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { AccessibilityInfo, Animated, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AppButton } from '@/components/AppButton';
-import { useTheme } from '@/theme/ThemeProvider';
-import { Colors } from '@/theme/colors';
-import { FontSize, FontWeight, TextStyles } from '@/theme/typography';
-import { MIN_TOUCH_TARGET, Radius, Spacing } from '@/theme/spacing';
+import { AppText, Button, Icon, Screen, type IconName } from '@/components/ui';
 import { useOnboardingSeen } from '@/hooks/useOnboardingSeen';
+import { getLocationPermissionStatus, requestLocationPermission } from '@/services/location';
+import { getMicPermissionStatus, requestMicPermission } from '@/services/voice';
+import { makeStyles, useTheme } from '@/theme/ThemeProvider';
+import { SCREEN_INSET, Spacing } from '@/theme/spacing';
 
-interface Card {
-  glyph: string;
+type StepKind = 'intro' | 'location' | 'microphone';
+
+interface Step {
+  kind: StepKind;
+  icon: IconName;
   title: string;
   copy: string;
+  primary: string;
 }
 
-const CARDS: readonly Card[] = [
+const STEPS: readonly Step[] = [
   {
-    glyph: '🟢',
-    title: 'You control live mode',
-    copy: 'RoadPing only shows you when you start it. Nothing is shared until you go live.',
+    kind: 'intro',
+    icon: 'eye.slash.fill',
+    title: "You're invisible until you go live",
+    copy: 'Nothing is shared until you tap Go Live. Leaving the app ends your live session.',
+    primary: 'Continue',
   },
   {
-    glyph: '🧭',
-    title: 'See nearby drivers',
-    copy: 'Your map stays centered around your drive, with nearby drivers around you.',
+    kind: 'location',
+    icon: 'location.fill',
+    title: 'Location',
+    copy: 'See and be seen by nearby live drivers while RoadPing is active.',
+    primary: 'Allow Location',
   },
   {
-    glyph: '🛑',
-    title: 'Hide anytime',
-    copy: 'Stop & Hide is always one tap away. You disappear from the map instantly.',
+    kind: 'microphone',
+    icon: 'mic.fill',
+    title: 'Microphone',
+    copy: "Hold to talk. RoadPing doesn't record your conversations.",
+    primary: 'Allow Microphone',
   },
 ];
 
 export default function WelcomeScreen() {
   const router = useRouter();
-  const { accent } = useTheme();
+  const styles = useStyles();
+  const { accent, a11y } = useTheme();
   const { markSeen } = useOnboardingSeen();
 
   const [index, setIndex] = useState(0);
-  const isLast = index === CARDS.length - 1;
-  const card = CARDS[index]!; // index is always clamped to 0..CARDS.length-1
+  const [busy, setBusy] = useState(false);
+  const fade = useRef(new Animated.Value(1)).current;
+  const step = STEPS[index]!; // index is always clamped to 0..STEPS.length-1
+  const isLast = index === STEPS.length - 1;
+
+  useEffect(() => {
+    fade.setValue(a11y.reduceMotion ? 1 : 0);
+    if (!a11y.reduceMotion) {
+      Animated.timing(fade, { toValue: 1, duration: 220, useNativeDriver: true }).start();
+    }
+    AccessibilityInfo.announceForAccessibility(`Step ${index + 1} of ${STEPS.length}. ${step.title}`);
+  }, [index, fade, a11y.reduceMotion, step.title]);
 
   function finish() {
     markSeen();
     router.replace('/');
   }
 
-  function next() {
+  function advance() {
     if (isLast) finish();
     else setIndex((i) => i + 1);
   }
 
-  function back() {
-    setIndex((i) => Math.max(0, i - 1));
+  async function handlePrimary() {
+    if (step.kind === 'intro') {
+      advance();
+      return;
+    }
+    setBusy(true);
+    try {
+      if (step.kind === 'location') {
+        if ((await getLocationPermissionStatus()) === 'undetermined') {
+          await requestLocationPermission();
+        }
+      } else if ((await getMicPermissionStatus()) === 'undetermined') {
+        await requestMicPermission();
+      }
+    } catch {
+      // A failed prompt isn't fatal here; Drive asks again in context.
+    } finally {
+      setBusy(false);
+      advance();
+    }
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      {/* Top row: Back (when past first) + Skip (small, secondary) */}
-      <View style={styles.topRow}>
-        {index > 0 ? (
-          <Pressable
-            onPress={back}
-            hitSlop={12}
-            accessibilityRole="button"
-            accessibilityLabel="Previous"
-          >
-            <Text style={[styles.topAction, { color: accent.accent }]}>‹ Back</Text>
-          </Pressable>
-        ) : (
-          <View style={styles.topSpacer} />
+    <Screen>
+      <View style={styles.top}>
+        <AppText variant="footnote" color="secondary" tabular>
+          {index + 1} of {STEPS.length}
+        </AppText>
+        {index === 0 && (
+          <Button label="Skip" variant="plain" size="sm" onPress={finish} accessibilityLabel="Skip introduction" />
         )}
-        <Pressable
-          onPress={finish}
-          hitSlop={12}
-          accessibilityRole="button"
-          accessibilityLabel="Skip introduction"
-        >
-          <Text style={styles.skip}>Skip</Text>
-        </Pressable>
       </View>
 
-      {/* Holographic card */}
-      <View style={styles.body}>
-        <View
-          style={[
-            styles.card,
-            {
-              borderColor: accent.accent,
-              shadowColor: accent.accent,
-              backgroundColor: accent.accentMuted,
-            },
-          ]}
-        >
-          <View
-            style={[
-              styles.glyphRing,
-              { borderColor: accent.accent, backgroundColor: Colors.background },
-            ]}
-          >
-            <Text style={styles.glyph}>{card.glyph}</Text>
-          </View>
-          <Text style={styles.cardTitle}>{card.title}</Text>
-          <Text style={styles.cardCopy}>{card.copy}</Text>
+      <Animated.View
+        style={[
+          styles.body,
+          {
+            opacity: fade,
+            transform: a11y.reduceMotion
+              ? []
+              : [{ translateY: fade.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }],
+          },
+        ]}
+      >
+        <View style={[styles.iconWell, { backgroundColor: accent.muted }]}>
+          <Icon name={step.icon} size={40} color={accent.text} />
         </View>
+        <AppText variant="title1" weight="bold" align="center" accessibilityRole="header">
+          {step.title}
+        </AppText>
+        <AppText variant="body" color="secondary" align="center">
+          {step.copy}
+        </AppText>
+      </Animated.View>
 
-        {/* Dot indicators */}
-        <View style={styles.dots}>
-          {CARDS.map((_, i) => (
-            <View
-              key={i}
-              style={[
-                styles.dot,
-                i === index && [styles.dotActive, { backgroundColor: accent.accent }],
-              ]}
-            />
-          ))}
-        </View>
-      </View>
-
-      {/* Primary action */}
       <View style={styles.footer}>
-        <AppButton
-          label={isLast ? 'Get started' : 'Next'}
-          variant="primary"
+        <Button
+          label={step.primary}
           size="lg"
           fullWidth
-          onPress={next}
+          loading={busy}
+          onPress={() => void handlePrimary()}
         />
+        {step.kind !== 'intro' && (
+          <Button label="Not Now" variant="plain" fullWidth disabled={busy} onPress={advance} />
+        )}
       </View>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-  topRow: {
+const useStyles = makeStyles(() => ({
+  top: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.md,
-    paddingTop: Spacing.sm,
-    minHeight: MIN_TOUCH_TARGET,
+    minHeight: 44,
+    paddingHorizontal: SCREEN_INSET,
   },
-  topSpacer: {
-    width: 60,
-  },
-  topAction: {
-    fontSize: FontSize.body,
-    fontWeight: FontWeight.medium,
-  },
-  skip: {
-    fontSize: FontSize.bodySmall,
-    color: Colors.textTertiary,
-    fontWeight: FontWeight.medium,
-  },
-
   body: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: Spacing.lg,
-    gap: Spacing.xl,
-  },
-  card: {
-    width: '100%',
-    alignItems: 'center',
     gap: Spacing.md,
-    paddingVertical: Spacing.xxl,
-    paddingHorizontal: Spacing.lg,
-    borderRadius: Radius.xl,
-    borderWidth: 1,
-    // Holographic glow — accent-tinted surface + colored shadow halo.
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 24,
-    elevation: 8,
+    paddingHorizontal: Spacing.xl,
   },
-  glyphRing: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    borderWidth: 2,
+  iconWell: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: Spacing.sm,
   },
-  glyph: {
-    fontSize: 44,
-  },
-  cardTitle: {
-    ...TextStyles.headingLarge,
-    color: Colors.textPrimary,
-    textAlign: 'center',
-  },
-  cardCopy: {
-    ...TextStyles.body,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: FontSize.body * 1.55,
-  },
-
-  dots: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: Colors.border,
-  },
-  dotActive: {
-    width: 22,
-  },
-
   footer: {
-    paddingHorizontal: Spacing.md,
-    paddingTop: Spacing.md,
+    gap: Spacing.sm,
+    paddingHorizontal: SCREEN_INSET,
     paddingBottom: Spacing.md,
   },
-});
+}));

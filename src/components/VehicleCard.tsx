@@ -1,188 +1,129 @@
 /**
- * VehicleCard — list item for a user's vehicle.
+ * VehicleCard — a vehicle as a Wallet-style card.
  *
- * Shows nickname (label), year-make-model, color, body type, and primary
- * badge. Exposes optional onEdit / onDelete / onSetPrimary actions.
+ * The card is the vehicle's identity: body-type emoji, the generated label,
+ * year/make/model, and a strip in the car's paint color when known. The
+ * primary vehicle carries a "Primary" tag with a star (text + symbol, never
+ * color alone). Tapping the card opens its actions (handled by the screen).
  */
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { AppCard } from './AppCard';
-import { AppButton } from './AppButton';
-import { Colors } from '@/theme/colors';
-import { FontSize, FontWeight } from '@/theme/typography';
-import { Radius, Spacing } from '@/theme/spacing';
+import { ActivityIndicator, View } from 'react-native';
+
+import { AppText, Icon, PressableScale } from '@/components/ui';
 import type { VehicleRow } from '@/services/types';
 import { bodyTypeEmoji, bodyTypeLabel, bodyTypeSqlToUi } from '@/services/vehicle';
+import { makeStyles, useTheme } from '@/theme/ThemeProvider';
+import { Radius, Spacing } from '@/theme/spacing';
+import { vehicleSwatch } from './identity';
 
 interface VehicleCardProps {
   vehicle: VehicleRow;
-  onEdit?: () => void;
-  onDelete?: () => void;
-  onSetPrimary?: () => void;
-  /** True while an action on this card is in flight. Disables buttons. */
+  onPress: () => void;
+  /** True while an action on this card is in flight. */
   busy?: boolean;
 }
 
-export function VehicleCard({
-  vehicle,
-  onEdit,
-  onDelete,
-  onSetPrimary,
-  busy = false,
-}: VehicleCardProps) {
+export function VehicleCard({ vehicle, onPress, busy = false }: VehicleCardProps) {
+  const { colors, accent } = useTheme();
+  const styles = useStyles();
   const bodyUi = vehicle.body_type !== null ? bodyTypeSqlToUi(vehicle.body_type) : null;
-  const subtitleParts = [
+  const swatch = vehicleSwatch(vehicle.color);
+  const details = [
     vehicle.year !== null ? String(vehicle.year) : null,
     vehicle.make,
     vehicle.model,
   ].filter((p): p is string => typeof p === 'string' && p.length > 0);
+  const meta = [bodyUi !== null ? bodyTypeLabel(bodyUi) : null, vehicle.color]
+    .filter((p): p is string => typeof p === 'string' && p.length > 0)
+    .join(' · ');
 
   return (
-    <AppCard
-      elevation="raised"
-      highlight={vehicle.is_active ? 'primary' : undefined}
-      padded
+    <PressableScale
+      onPress={onPress}
+      disabled={busy}
+      pressedScale={0.98}
+      style={[styles.card, vehicle.is_active && { borderColor: accent.fill, borderWidth: 2 }]}
+      accessibilityRole="button"
+      accessibilityLabel={`${vehicle.label}${vehicle.is_active ? ', primary vehicle' : ''}. ${details.join(' ')}`}
+      accessibilityHint="Shows vehicle options"
     >
-      <View style={styles.headerRow}>
-        <View style={styles.titleWrap}>
-          <Text style={styles.emoji}>
-            {bodyUi !== null ? bodyTypeEmoji(bodyUi) : '🚗'}
-          </Text>
-          <View style={styles.titleText}>
-            <Text style={styles.nickname} numberOfLines={1}>
-              {vehicle.label}
-            </Text>
-            {subtitleParts.length > 0 && (
-              <Text style={styles.subtitle} numberOfLines={1}>
-                {subtitleParts.join(' ')}
-              </Text>
-            )}
+      <View style={[styles.band, { backgroundColor: swatch ?? colors.fill }]} />
+      <View style={styles.body}>
+        <View style={styles.top}>
+          <View style={styles.emojiWell}>
+            <AppText variant="title1" maxScale={1.2}>
+              {bodyUi !== null ? bodyTypeEmoji(bodyUi) : '🚗'}
+            </AppText>
           </View>
+          {vehicle.is_active && (
+            <View style={[styles.primary, { backgroundColor: accent.muted }]}>
+              <Icon name="star.fill" size={11} color={accent.text} />
+              <AppText variant="caption1" weight="semibold" style={{ color: accent.text }}>
+                Primary
+              </AppText>
+            </View>
+          )}
+          {busy && <ActivityIndicator color={colors.textSecondary} />}
         </View>
-
-        {vehicle.is_active && (
-          <View style={styles.primaryBadge} accessibilityLabel="Primary vehicle">
-            <Text style={styles.primaryBadgeText}>PRIMARY</Text>
-          </View>
+        <AppText variant="title3" weight="bold" numberOfLines={2}>
+          {vehicle.label}
+        </AppText>
+        {details.length > 0 && (
+          <AppText variant="subheadline" color="secondary" numberOfLines={1}>
+            {details.join(' ')}
+          </AppText>
+        )}
+        {meta.length > 0 && (
+          <AppText variant="footnote" color="tertiary" numberOfLines={1}>
+            {meta}
+          </AppText>
         )}
       </View>
-
-      <View style={styles.metaRow}>
-        {bodyUi !== null && (
-          <View style={styles.metaChip}>
-            <Text style={styles.metaChipText}>{bodyTypeLabel(bodyUi)}</Text>
-          </View>
-        )}
-        {vehicle.color !== null && vehicle.color.length > 0 && (
-          <View style={styles.metaChip}>
-            <Text style={styles.metaChipText}>{vehicle.color}</Text>
-          </View>
-        )}
-      </View>
-
-      <View style={styles.actionsRow}>
-        {onSetPrimary !== undefined && !vehicle.is_active && (
-          <AppButton
-            label="Make primary"
-            variant="secondary"
-            size="sm"
-            onPress={onSetPrimary}
-            disabled={busy}
-            style={styles.actionBtn}
-          />
-        )}
-        {onEdit !== undefined && (
-          <AppButton
-            label="Edit"
-            variant="ghost"
-            size="sm"
-            onPress={onEdit}
-            disabled={busy}
-            style={styles.actionBtn}
-          />
-        )}
-        {onDelete !== undefined && (
-          <AppButton
-            label="Delete"
-            variant="danger"
-            size="sm"
-            onPress={onDelete}
-            disabled={busy}
-            style={styles.actionBtn}
-          />
-        )}
-      </View>
-    </AppCard>
+    </PressableScale>
   );
 }
 
-const styles = StyleSheet.create({
-  headerRow: {
+const useStyles = makeStyles((t) => ({
+  card: {
+    borderRadius: Radius.lg,
+    borderCurve: 'continuous',
+    backgroundColor: t.colors.surface,
+    overflow: 'hidden',
+    borderWidth: t.a11y.increaseContrast ? 1 : 0,
+    borderColor: t.colors.separatorStrong,
+    shadowColor: t.colors.shadow,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: t.scheme === 'dark' ? 0 : 0.08,
+    shadowRadius: 12,
+  },
+  band: {
+    height: 8,
+  },
+  body: {
+    padding: Spacing.md20,
+    gap: Spacing.xs,
+  },
+  top: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: Spacing.sm,
+    marginBottom: Spacing.sm,
   },
-  titleWrap: {
-    flex: 1,
+  emojiWell: {
+    width: 56,
+    height: 56,
+    borderRadius: Radius.md,
+    borderCurve: 'continuous',
+    backgroundColor: t.colors.fill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primary: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.md12,
-  },
-  emoji: {
-    fontSize: 28,
-  },
-  titleText: {
-    flex: 1,
-    gap: 2,
-  },
-  nickname: {
-    fontSize: FontSize.bodyLarge,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textPrimary,
-  },
-  subtitle: {
-    fontSize: FontSize.bodySmall,
-    color: Colors.textSecondary,
-  },
-  primaryBadge: {
-    backgroundColor: Colors.primaryMuted,
-    borderColor: Colors.primary,
-    borderWidth: 1,
-    borderRadius: Radius.full,
+    gap: 4,
     paddingHorizontal: Spacing.sm,
-    paddingVertical: 2,
-  },
-  primaryBadgeText: {
-    fontSize: FontSize.micro,
-    fontWeight: FontWeight.bold,
-    color: Colors.primary,
-    letterSpacing: 1,
-  },
-  metaRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Spacing.xs,
-    marginTop: Spacing.md12,
-  },
-  metaChip: {
-    backgroundColor: Colors.surfaceElevated,
+    paddingVertical: 4,
     borderRadius: Radius.full,
-    paddingHorizontal: Spacing.md12,
-    paddingVertical: Spacing.xs,
   },
-  metaChipText: {
-    fontSize: FontSize.caption,
-    color: Colors.textSecondary,
-    fontWeight: FontWeight.medium,
-  },
-  actionsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Spacing.sm,
-    marginTop: Spacing.md,
-  },
-  actionBtn: {
-    flexShrink: 1,
-  },
-});
+}));

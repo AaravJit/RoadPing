@@ -1,55 +1,47 @@
 /**
- * RoadPing spacing scale.
+ * Spacing, corner radii and touch-target sizes.
  *
- * Based on a 4 px base unit. All interactive tap targets are at least
- * 48 px to meet Apple HIG / Material minimum touch target guidelines —
- * especially important for in-car use.
+ * 4 pt base unit. Radii follow a small set so every surface in the app shares
+ * the same corner language; pair them with `borderCurve: 'continuous'` for the
+ * iOS squircle.
  */
 
 export const Spacing = {
-  /** 2 px — hairline separators */
-  hairline: 2,
-  /** 4 px */
+  xxs: 2,
   xs: 4,
-  /** 8 px */
   sm: 8,
-  /** 12 px */
   md12: 12,
-  /** 16 px — default content padding */
   md: 16,
-  /** 20 px */
   md20: 20,
-  /** 24 px */
   lg: 24,
-  /** 32 px */
   xl: 32,
-  /** 40 px */
   xl40: 40,
-  /** 48 px */
   xxl: 48,
-  /** 64 px */
   huge: 64,
-  /** 80 px */
-  massive: 80,
 } as const;
 
 export const Radius = {
-  /** 4 px — small chips, pills */
-  xs: 4,
-  /** 8 px — inputs, small cards */
-  sm: 8,
-  /** 12 px — default card radius */
-  md: 12,
-  /** 16 px — large cards */
-  lg: 16,
-  /** 24 px — bottom sheets, modals */
-  xl: 24,
-  /** 9999 px — fully pill-shaped buttons */
+  /** Badges, small tags. */
+  xs: 6,
+  /** Inputs inside a group, chips with text. */
+  sm: 10,
+  /** Grouped lists, cards. */
+  md: 14,
+  /** Large cards, floating controls. */
+  lg: 22,
+  /** Voice Dock, sheets. */
+  xl: 32,
   full: 9999,
 } as const;
 
-/** Minimum touch target for driving-safe UI */
-export const MIN_TOUCH_TARGET = 48;
+/** Apple HIG minimum hit target. */
+export const MIN_TOUCH_TARGET = 44;
 
-/** Tap target for the hold-to-talk button — large for driving */
-export const HOLD_TO_TALK_SIZE = 120;
+/** Map-side controls a driver may reach for: bigger than the minimum. */
+export const DRIVE_TOUCH_TARGET = 56;
+
+/** The hold-to-talk control. */
+export const HOLD_TO_TALK_SIZE = 104;
+
+/** Standard horizontal inset for screen content. */
+export const SCREEN_INSET = Spacing.md20;

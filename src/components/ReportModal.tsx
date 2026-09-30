@@ -1,41 +1,37 @@
 /**
- * ReportModal — silent report flow for nearby drivers.
+ * ReportModal — silent report flow (Drive map and Rooms).
  *
- * Privacy contract: the reported user is never notified. We always return a
- * success-shaped confirmation to the reporter regardless of internal state.
- *
- * Phase 6 wraps the MOCK moderation.reportUser. Phase 7 will swap the
- * service implementation without changing this component.
+ * Privacy contract: the reported person is never notified. The copy says so
+ * up front, and the confirmation repeats it.
  */
-import React, { useState } from 'react';
-import {
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
-import { AppButton } from './AppButton';
-import { Colors } from '@/theme/colors';
-import { FontSize, FontWeight } from '@/theme/typography';
-import { Radius, Spacing } from '@/theme/spacing';
+import React, { useEffect, useState } from 'react';
+import { Pressable, ScrollView, TextInput, View } from 'react-native';
+
+import { AppText, Button, Icon, Notice, Sheet } from '@/components/ui';
 import {
   REPORT_REASON_OPTIONS,
   reportUser,
   type ReportReasonOption,
 } from '@/services/moderation';
-import type { NearbyDriverCard, ReportContext } from '@/services/types';
+import type { ReportContext } from '@/services/types';
+import { makeStyles, useTheme } from '@/theme/ThemeProvider';
+import { MIN_TOUCH_TARGET, Radius, Spacing } from '@/theme/spacing';
+import { textStyle } from '@/theme/typography';
+import { personName } from './identity';
+
+/** Who is being reported. Nearby drivers and room members both fit. */
+export interface ReportTarget {
+  user_id: string;
+  display_name: string | null;
+  handle: string | null;
+}
 
 interface ReportModalProps {
   visible: boolean;
-  driver: NearbyDriverCard | null;
+  driver: ReportTarget | null;
   context: ReportContext;
   onClose: () => void;
-  /** Called after a successful (mock) submission so callers can show a toast. */
+  /** Called after a successful submission. */
   onSubmitted?: () => void;
 }
 
@@ -48,17 +44,21 @@ export function ReportModal({
   onClose,
   onSubmitted,
 }: ReportModalProps) {
+  const { colors, accent } = useTheme();
+  const styles = useStyles();
   const [selected, setSelected] = useState<ReportReasonOption | null>(null);
   const [details, setDetails] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [confirmShown, setConfirmShown] = useState(false);
 
-  // Reset state whenever the modal opens for a different driver.
-  React.useEffect(() => {
+  // Reset whenever the sheet opens for someone.
+  useEffect(() => {
     if (visible) {
       setSelected(null);
       setDetails('');
       setSubmitting(false);
+      setError(null);
       setConfirmShown(false);
     }
   }, [visible, driver?.user_id]);
@@ -66,285 +66,172 @@ export function ReportModal({
   async function handleSubmit() {
     if (driver === null || selected === null) return;
     setSubmitting(true);
+    setError(null);
     try {
       await reportUser({
         reported_user_id: driver.user_id,
         reason: selected.value,
         context,
-        ...(details.trim().length > 0
-          ? { details: details.trim().slice(0, DETAILS_MAX) }
-          : {}),
+        ...(details.trim().length > 0 ? { details: details.trim().slice(0, DETAILS_MAX) } : {}),
       });
       setConfirmShown(true);
       onSubmitted?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'The report could not be sent. Please try again.');
     } finally {
       setSubmitting(false);
     }
   }
 
+  const name = driver !== null ? personName(driver) : 'this driver';
+
+  if (confirmShown) {
+    return (
+      <Sheet visible={visible} onClose={onClose}>
+        <View style={styles.confirm}>
+          <Icon name="checkmark.circle.fill" size={44} color={colors.success} />
+          <AppText variant="title3" weight="bold" align="center" accessibilityRole="header">
+            Report sent
+          </AppText>
+          <AppText variant="body" color="secondary" align="center">
+            Thanks. RoadPing's moderators will review it. {name} hasn't been notified.
+          </AppText>
+          <Button label="Done" onPress={onClose} size="lg" fullWidth />
+        </View>
+      </Sheet>
+    );
+  }
+
   return (
-    <Modal
+    <Sheet
       visible={visible}
-      animationType="slide"
-      transparent
-      onRequestClose={onClose}
-      statusBarTranslucent
+      onClose={onClose}
+      title={`Report ${name}`}
+      subtitle="Reports are private. They won't be told who reported them."
+      maxHeight={0.9}
     >
-      <View style={styles.backdrop}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.sheetWrap}
-        >
-          <View style={styles.sheet}>
-            <View style={styles.handle} />
-
-            {!confirmShown ? (
-              <ScrollView
-                contentContainerStyle={styles.scroll}
-                keyboardShouldPersistTaps="handled"
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
+      >
+        <AppText variant="footnote" color="secondary" weight="medium" accessibilityRole="header">
+          Reason
+        </AppText>
+        <View style={styles.group} accessibilityRole="radiogroup">
+          {REPORT_REASON_OPTIONS.map((opt, i) => {
+            const isSel = selected?.value === opt.value;
+            return (
+              <Pressable
+                key={opt.value}
+                onPress={() => setSelected(opt)}
+                style={({ pressed }) => [
+                  styles.option,
+                  i > 0 && styles.optionDivider,
+                  pressed && { backgroundColor: colors.fill },
+                ]}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: isSel }}
+                accessibilityLabel={opt.label}
+                accessibilityHint={opt.description}
               >
-                <Text style={styles.title}>
-                  Report{' '}
-                  {driver?.handle !== null && driver?.handle !== undefined
-                    ? `@${driver.handle}`
-                    : (driver?.display_name ?? 'this driver')}
-                </Text>
-                <Text style={styles.subtitle}>
-                  Reports are silent. The other driver will not be notified.
-                </Text>
-
-                <Text style={styles.sectionLabel}>Reason</Text>
-                <View style={styles.options}>
-                  {REPORT_REASON_OPTIONS.map((opt) => {
-                    const isSel = selected?.value === opt.value;
-                    return (
-                      <Pressable
-                        key={opt.value}
-                        style={[styles.option, isSel && styles.optionSelected]}
-                        onPress={() => setSelected(opt)}
-                        accessibilityRole="radio"
-                        accessibilityState={{ selected: isSel }}
-                        accessibilityLabel={opt.label}
-                      >
-                        <View style={styles.optionTextWrap}>
-                          <Text
-                            style={[
-                              styles.optionLabel,
-                              isSel && styles.optionLabelSelected,
-                            ]}
-                          >
-                            {opt.label}
-                          </Text>
-                          <Text style={styles.optionDesc}>
-                            {opt.description}
-                          </Text>
-                        </View>
-                        <View
-                          style={[
-                            styles.radioDot,
-                            isSel && styles.radioDotSelected,
-                          ]}
-                        />
-                      </Pressable>
-                    );
-                  })}
+                <View style={styles.optionText}>
+                  <AppText variant="body" weight={isSel ? 'semibold' : 'regular'}>
+                    {opt.label}
+                  </AppText>
+                  <AppText variant="footnote" color="secondary">
+                    {opt.description}
+                  </AppText>
                 </View>
-
-                <Text style={styles.sectionLabel}>
-                  Add details (optional)
-                </Text>
-                <TextInput
-                  style={styles.textArea}
-                  multiline
-                  numberOfLines={4}
-                  value={details}
-                  onChangeText={(t) => setDetails(t.slice(0, DETAILS_MAX))}
-                  placeholder="What happened?"
-                  placeholderTextColor={Colors.textTertiary}
-                  maxLength={DETAILS_MAX}
-                  textAlignVertical="top"
+                <Icon
+                  name={isSel ? 'checkmark.circle.fill' : 'circle'}
+                  size={22}
+                  color={isSel ? accent.fill : colors.textTertiary}
                 />
-                <Text style={styles.counter}>
-                  {details.length}/{DETAILS_MAX}
-                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
 
-                <View style={styles.actions}>
-                  <AppButton
-                    label="Submit report"
-                    variant="primary"
-                    size="lg"
-                    fullWidth
-                    loading={submitting}
-                    disabled={selected === null}
-                    onPress={() => {
-                      void handleSubmit();
-                    }}
-                  />
-                  <AppButton
-                    label="Cancel"
-                    variant="ghost"
-                    size="md"
-                    fullWidth
-                    disabled={submitting}
-                    onPress={onClose}
-                  />
-                </View>
-              </ScrollView>
-            ) : (
-              <View style={styles.confirmWrap}>
-                <Text style={styles.confirmEmoji}>✓</Text>
-                <Text style={styles.confirmTitle}>Report received</Text>
-                <Text style={styles.confirmBody}>
-                  Thanks. Our moderators will review this report. The other
-                  driver hasn’t been notified.
-                </Text>
-                <AppButton
-                  label="Done"
-                  variant="primary"
-                  size="lg"
-                  fullWidth
-                  onPress={onClose}
-                />
-              </View>
-            )}
-          </View>
-        </KeyboardAvoidingView>
-      </View>
-    </Modal>
+        <AppText variant="footnote" color="secondary" weight="medium">
+          Details (optional)
+        </AppText>
+        <TextInput
+          style={styles.textArea}
+          multiline
+          value={details}
+          onChangeText={(t) => setDetails(t.slice(0, DETAILS_MAX))}
+          placeholder="What happened?"
+          placeholderTextColor={colors.textTertiary}
+          selectionColor={accent.fill}
+          maxLength={DETAILS_MAX}
+          textAlignVertical="top"
+          accessibilityLabel="Details, optional"
+        />
+        <AppText variant="caption1" color="tertiary" align="right" tabular>
+          {details.length}/{DETAILS_MAX}
+        </AppText>
+
+        {error !== null && <Notice tone="danger" title="Report not sent" message={error} />}
+
+        <Button
+          label="Send Report"
+          size="lg"
+          fullWidth
+          loading={submitting}
+          disabled={selected === null}
+          onPress={() => {
+            void handleSubmit();
+          }}
+        />
+      </ScrollView>
+    </Sheet>
   );
 }
 
-const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: Colors.overlay,
-    justifyContent: 'flex-end',
-  },
-  sheetWrap: {
-    width: '100%',
-  },
-  sheet: {
-    backgroundColor: Colors.surface,
-    borderTopLeftRadius: Radius.xl,
-    borderTopRightRadius: Radius.xl,
-    maxHeight: '90%',
-    paddingBottom: Spacing.xl,
-  },
-  handle: {
-    alignSelf: 'center',
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: Colors.border,
-    marginTop: Spacing.sm,
-    marginBottom: Spacing.md,
-  },
+const useStyles = makeStyles((t) => ({
   scroll: {
-    paddingHorizontal: Spacing.md,
-    paddingBottom: Spacing.lg,
-    gap: Spacing.md,
-  },
-  title: {
-    fontSize: FontSize.heading,
-    fontWeight: FontWeight.bold,
-    color: Colors.textPrimary,
-  },
-  subtitle: {
-    fontSize: FontSize.bodySmall,
-    color: Colors.textSecondary,
-    lineHeight: FontSize.bodySmall * 1.5,
-  },
-  sectionLabel: {
-    marginTop: Spacing.sm,
-    fontSize: FontSize.label,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textTertiary,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  options: {
+    paddingHorizontal: Spacing.md20,
+    paddingBottom: Spacing.md,
     gap: Spacing.sm,
+  },
+  group: {
+    backgroundColor: t.colors.surface,
+    borderRadius: Radius.md,
+    borderCurve: 'continuous',
+    overflow: 'hidden',
+    marginBottom: Spacing.md,
   },
   option: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.md,
-    padding: Spacing.md,
-    borderRadius: Radius.md,
-    backgroundColor: Colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    gap: Spacing.md12,
+    minHeight: MIN_TOUCH_TARGET + 12,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md12,
   },
-  optionSelected: {
-    borderColor: Colors.primary,
-    backgroundColor: Colors.primaryMuted,
+  optionDivider: {
+    borderTopWidth: 0.5,
+    borderTopColor: t.colors.separator,
   },
-  optionTextWrap: {
+  optionText: {
     flex: 1,
     gap: 2,
   },
-  optionLabel: {
-    fontSize: FontSize.body,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textPrimary,
-  },
-  optionLabelSelected: {
-    color: Colors.primary,
-  },
-  optionDesc: {
-    fontSize: FontSize.caption,
-    color: Colors.textSecondary,
-  },
-  radioDot: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    borderWidth: 2,
-    borderColor: Colors.border,
-  },
-  radioDotSelected: {
-    borderColor: Colors.primary,
-    backgroundColor: Colors.primary,
-  },
   textArea: {
-    minHeight: 96,
-    backgroundColor: Colors.surfaceElevated,
-    borderRadius: Radius.sm,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.md,
-    fontSize: FontSize.body,
-    color: Colors.textPrimary,
+    ...textStyle('body'),
+    minHeight: 100,
+    color: t.colors.textPrimary,
+    backgroundColor: t.colors.surface,
+    borderRadius: Radius.md,
+    borderCurve: 'continuous',
+    padding: Spacing.md12,
   },
-  counter: {
-    alignSelf: 'flex-end',
-    fontSize: FontSize.caption,
-    color: Colors.textTertiary,
-  },
-  actions: {
-    marginTop: Spacing.md,
-    gap: Spacing.sm,
-  },
-  confirmWrap: {
+  confirm: {
+    alignItems: 'center',
+    gap: Spacing.md12,
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.md,
-    paddingBottom: Spacing.lg,
-    gap: Spacing.md,
-    alignItems: 'center',
+    paddingBottom: Spacing.sm,
   },
-  confirmEmoji: {
-    fontSize: 56,
-    color: Colors.success,
-  },
-  confirmTitle: {
-    fontSize: FontSize.heading,
-    fontWeight: FontWeight.bold,
-    color: Colors.textPrimary,
-  },
-  confirmBody: {
-    fontSize: FontSize.body,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: FontSize.body * 1.5,
-  },
-});
+}));
