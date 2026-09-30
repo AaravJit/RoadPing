@@ -167,13 +167,39 @@ Exceeding returns HTTP 429. If the rate-limit RPC itself errors, the request is
 allowed and the error logged, so a limiter fault can't take the app down; the
 location protections above do not depend on it.
 
+## Production migration history
+
+Production (`govebqdalfcoiyovsdth`) had already applied
+`20260609000010_terms_and_report_reasons` from the unmerged
+`apple-compliance-resubmission` branch. That file is now in
+`supabase/migrations/` byte-for-byte, so the repo history matches production
+and `db push` no longer stops on a remote version missing locally. Every
+statement in it is `IF NOT EXISTS`, and the CLI skips versions already recorded
+in `supabase_migrations.schema_migrations`, so it is never re-run in
+production. `production_parity.test.sql` checks its columns and enum labels.
+
+The app code, types and report UI that use these columns and reasons are still
+only on `apple-compliance-resubmission`. `_shared/validate.ts` carries the two
+new report reasons here so that deploying `report-user` from this branch does
+not reject reports production already accepts.
+
 ## Deploy order
 
-1. `supabase db push` (migration 010). The currently deployed Edge Functions
-   keep working: they use `service_role`, and the deprecated
-   `get_nearby_drivers(float8, float8, float8, uuid)` still exists for them.
-2. `supabase functions deploy` for get-nearby-drivers, update-live-location,
-   start-live-session, start-voice-session, create-agora-token, report-user.
+1. `supabase link --project-ref govebqdalfcoiyovsdth`, then
+   `supabase migration list`: local and remote must match through
+   `20260609000010`, with only `20260930000010` pending. If anything else
+   differs, stop.
+2. `supabase db push --dry-run` must list only
+   `20260930000010_security_lockdown.sql`; then `supabase db push`. The
+   currently deployed Edge Functions keep working: they use `service_role`, and
+   the deprecated `get_nearby_drivers(float8, float8, float8, uuid)` still
+   exists for them.
+3. Deploy only these functions, one by one:
+   `supabase functions deploy <name>` for get-nearby-drivers,
+   update-live-location, start-live-session, start-voice-session,
+   create-agora-token, report-user. Do not run a blanket
+   `supabase functions deploy`: `get-room-members` on this branch lacks the
+   block filter from `apple-compliance-resubmission`.
 
 ## Rollback
 

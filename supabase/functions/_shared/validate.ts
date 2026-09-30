@@ -40,6 +40,8 @@ export function floorToRangeStep(metres: number): number {
 
 export const REPORT_REASONS = [
   'harassment',
+  'threats',
+  'hate_or_discrimination',
   'inappropriate_content',
   'spam',
   'impersonation',
