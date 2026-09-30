@@ -183,6 +183,20 @@ only on `apple-compliance-resubmission`. `_shared/validate.ts` carries the two
 new report reasons here so that deploying `report-user` from this branch does
 not reject reports production already accepts.
 
+## Migration 011: platform function hardening
+
+`20260930000011_platform_function_hardening.sql` revokes client `EXECUTE` on
+`public.rls_auto_enable()`, the function behind production's `ensure_rls`
+event trigger (Supabase's auto-enable-RLS recipe, installed outside these
+migrations), and pins `search_path = ''` on `public.set_updated_at()`.
+Postgres does not check `EXECUTE` when it fires an event trigger, so
+`ensure_rls` keeps enabling RLS on new public tables, including tables created
+by a role with no `EXECUTE` on the function
+(`platform_function_hardening.test.sql`). A direct call already failed before
+the revoke ("trigger functions can only be called as triggers"). The local
+test shim recreates the recipe so the tests run against production's state.
+Rollback: `supabase/rollback/20260930000011_platform_function_hardening.down.sql`.
+
 ## Deploy order
 
 1. `supabase link --project-ref govebqdalfcoiyovsdth`, then
