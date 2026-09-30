@@ -10,6 +10,7 @@
  *  • Starting inside a private zone is blocked (returns 403)
  *  • Any existing active session is cleanly ended first
  *  • Rate-limited per user
+ *  • range_m is floored to an allowed range (a distance-band edge)
  *  • GPS coordinates are NEVER returned to the client
  */
 
@@ -17,7 +18,7 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { createAdminClient } from '../_shared/client.ts';
 import { getAuthUser } from '../_shared/auth.ts';
 import { ok, err } from '../_shared/errors.ts';
-import { isUUID, isLat, isLng, isRangeM } from '../_shared/validate.ts';
+import { isUUID, isLat, isLng, isRangeM, broadcastRangeFor } from '../_shared/validate.ts';
 import { isRateLimited } from '../_shared/rateLimit.ts';
 
 Deno.serve(async (req: Request) => {
@@ -44,6 +45,13 @@ Deno.serve(async (req: Request) => {
     if (!isLat(lat)) return err(400, 'lat must be a number between -90 and 90');
     if (!isLng(lng)) return err(400, 'lng must be a number between -180 and 180');
     if (!isRangeM(range_m)) return err(400, 'range_m must be between 100 and 5000');
+    // Store only an allowed range (a distance-band edge), floored so nobody's
+    // radius grows. Older builds offered ¼ mi / 500 m; those are refused with
+    // a message rather than silently widened to ½ mi.
+    const rangeStep = broadcastRangeFor(range_m);
+    if (rangeStep === null) {
+      return err(400, 'The smallest range is now ½ mile (800 m). Choose a larger range and try again.');
+    }
     if (vehicle_id !== undefined && !isUUID(vehicle_id)) {
       return err(400, 'vehicle_id must be a valid UUID');
     }
@@ -124,7 +132,7 @@ Deno.serve(async (req: Request) => {
       .insert({
         user_id: user.id,
         vehicle_id: (vehicle_id as string | undefined) ?? null,
-        range_m: range_m as number,
+        range_m: rangeStep,
       })
       .select('id, expires_at')
       .single();

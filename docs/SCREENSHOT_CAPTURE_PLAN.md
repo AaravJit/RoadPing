@@ -29,8 +29,8 @@ if Apple still asks for it during the submission flow.
 3. Add a primary vehicle with a vivid color (Midnight Blue is the best).
 4. Stand near a residential street so the dark Apple Maps tile actually
    shows roads behind the markers — empty grid blocks look bad.
-5. Set the broadcast range to **2 km** so the range ring is visible without
-   the markers running off the map edge.
+5. Set the broadcast range to **1 mi** (1.6 km) so the range ring is fully
+   visible around you.
 6. Enable iOS **Do Not Disturb** so no banner notifications creep in.
 7. Hide the battery percentage and route the device through a USB-C
    connection to keep the status bar identical across shots.

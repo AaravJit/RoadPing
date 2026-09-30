@@ -4,7 +4,9 @@ Migration: `supabase/migrations/20260930000012_privacy_safe_proximity.sql`
 Rollback: `supabase/rollback/20260930000012_privacy_safe_proximity.down.sql`
 Tests: `supabase/tests/database/phase2_proximity_privacy.test.sql` (pgTAP),
 `scripts/db-test/concurrency.sh`, `supabase/functions/get-nearby-drivers/handler.test.ts`
-(Deno), `scripts/client-test/proximity.test.mjs` (Node).
+and `supabase/functions/_shared/validate.test.ts` (Deno),
+`scripts/client-test/proximity.test.mjs` and `ranges.test.mjs` (Node).
+Performance fixture: `scripts/db-test/perf.sh`.
 
 Builds on Phase 1 (`docs/SECURITY_LOCKDOWN.md`): position is the caller's
 stored presence, `location_presence` is unreadable by clients, every proximity
@@ -34,10 +36,11 @@ service-role access, and someone who can simply see the target on the road.
 | Vector | Before Phase 2 | After Phase 2 |
 |---|---|---|
 | Repeated distance polling | a fresh 50 m-rounded distance every request (up to 30/min) | one band per (caller, target session) per 30 s; refetches return the held value |
-| Client range probing | `range_m` in each request, 12 steps | the request body never reaches the query; the only range is the stored session range, floored to a step; changing it means a new session (12 per 10 min) and does not reset holds |
+| Client range probing | `range_m` in each request, 12 steps | the request body never reaches the query; the only range is the stored session range |
+| Session-restart range probing | n/a after the first draft of this PR: 12 stored steps (100–5000 m) let an attacker restart at 250 m, then 400 m, and learn "250–400 m" | the only effective ranges are 800 / 1600 / 3200 m (the band edges) and a 4800 m maximum; any stored value is floored to one of them, below 800 m to none. Present at range R ⇔ band ≤ R's band, so restarting at every range learns the band and nothing finer |
 | Movement + repeated observations (trilateration) | 50 m rings from any spoofed point, every request | 4 broad bands from **grid-snapped** positions, one sample per 30 s; resolution is bounded by the ~250 m cell, not GPS |
 | Band-boundary probing | n/a | edges are evaluated on cell centres, so an attacker learns at most which cell the target is in, one sample per 30 s |
-| Range-edge (visible or not) | exact `ST_DWithin`: exact-circle oracle | quantized predicate: same cell-level resolution. **Not held** (see Residual observability) |
+| Range-edge (visible or not) | exact `ST_DWithin`: exact-circle oracle | quantized predicate on band edges only: the edge is a band edge. **Not held** (see Residual observability) |
 | Ordering leakage | sorted by exact distance | band, then name, then id |
 | Fake-bearing UI | invented direction drawn as geography | no stranger is drawn on the map |
 | Session restart / reconnect | fresh numbers immediately | hold is keyed on the caller's user id, so restarting the app or session keeps it |
@@ -84,18 +87,67 @@ Quantized distance, upper bound inclusive:
 | `within_800m` | ≤ 800 | Within ½ mi | Within 800 m | within half a mile |
 | `800m_to_1600m` | 800–1600 | ½–1 mi | 0.8–1.6 km | half a mile to 1 mile away |
 | `1600m_to_3200m` | 1600–3200 | 1–2 mi | 1.6–3.2 km | 1 to 2 miles away |
-| `beyond_3200m` | > 3200 (to the 5000 m max range) | Over 2 mi | Over 3.2 km | more than 2 miles away |
+| `beyond_3200m` | > 3200 (to the 4800 m max range) | Over 2 mi | Over 3.2 km | more than 2 miles away |
 
 Why these: the edges are the ½, 1 and 2 mile range presets (800, 1600, 3200 m),
 so a range and its outermost band agree and imperial labels are round. Each
 band doubles the previous one, so relative precision is constant. There is no
 ¼ mi band: grid snapping moves a distance by up to ~320 m (see below), which
 would make a 400 m band wrong too often, and the nearest band is the most
-useful one for localisation. A 400 m or 500 m range simply shows everyone as
-"Within ½ mi", which is true.
+useful one for localisation.
 
 The client never converts a band back into a single number, prefixes "~", or
 says "about". Ranges are described as approximate in the Nearby sheet.
+
+## Broadcast ranges
+
+The range a user picks is also an observation channel: "visible or not" at
+range R says whether the target is within R. With the original 12 stored
+steps (100, 250, 400, 500, 800, 1000, 1600, 2000, 3000, 3200, 4800, 5000 m),
+an attacker could end and restart their session at 250 m (absent) and 400 m
+(present) and learn a 250–400 m interval although the band only said
+"Within ½ mi". The 30 s band hold does not help, because visibility itself is
+re-evaluated on every request.
+
+The only effective ranges are now the band edges plus one maximum:
+
+| Range | Imperial preset | Metric preset | Visible bands |
+|---|---|---|---|
+| 800 m | ½ mi | 800 m | within_800m |
+| 1600 m | 1 mi | 1.6 km | up to 800m_to_1600m |
+| 3200 m | 2 mi | 3.2 km | up to 1600m_to_3200m |
+| 4800 m | 3 mi (default) | 4.8 km | all four, beyond_3200m out to 4800 m |
+
+`private.range_step_m` floors any stored value to the largest of these at or
+below it, or NULL below 800 m; `nearby_pair_band` treats a NULL on either
+side as "not visible" (not `LEAST`, which skips NULLs and would silently
+widen a legacy ¼ mi range to the other side's). Since both sides' ranges are
+band edges, "present at range R" is exactly "fresh band ≤ R's band": the only
+extra fact beyond the band is the one horizon at 4800 m, which the contract
+already implies (you only see people within your range). The pgTAP suite
+restarts an attacker's session at 100 distinct ranges (100–5000 m in 50 m
+steps plus every old preset) against a target at 23 distances from 0 to
+~5.5 km, 2,300 restarts in all, and checks that the present/absent vectors
+split the placements into exactly 5 classes: the 4 bands and out of range.
+
+No one's radius grows:
+
+- `start-live-session` still accepts 100–5000 (old builds send it) but stores
+  the floored range. Old ¼ mi (400) and 500 m presets are refused with "The
+  smallest range is now ½ mile (800 m). Choose a larger range and try again."
+  rather than widened.
+- Existing rows are not rewritten (rollback stays exact). A live session with
+  a stored value below 800 m is neither shown nor shown anyone until the user
+  restarts; values above 800 m act as their floor (1000 → 800, 2000 and
+  3000 → 1600, 5000 → 4800), which only ever shrinks.
+- `profiles.default_range_m` keeps its value (default 2000 in the column,
+  4800 in the app). The app highlights the floored preset. A saved ¼ mi /
+  500 m default highlights nothing, the Drive dock reads "Set range", and Go
+  Live opens the range sheet ("Ranges now start at ½ mile. Pick one to go
+  live.") until the user chooses.
+- The old metric presets change: 500 m / 1 / 2 / 3 / 5 km become 800 m /
+  1.6 / 3.2 / 4.8 km. The imperial ½ / 1 / 2 / 3 mi presets are unchanged
+  and ¼ mi is gone.
 
 ## Spatial quantization
 
@@ -194,15 +246,21 @@ What a live user can still learn about another live user:
 - That they are live, within both ranges, and not blocked; their profile and
   vehicle fields; speaking and DND state. (That is the feature.)
 - Their band, one sample per 30 s per account, from cell centres.
-- **The range edge, on every request.** Whether someone is visible is not
-  held (visibility must stay fresh), so an attacker at a fixed range can see
-  the target appear or vanish as either of them crosses the edge. It resolves
-  cell centres only, is limited by the 30/min request limit and the spoofing
-  envelope, and range changes cost a new session (12 per 10 min). A future
-  option is an exit/entry cooldown, at the cost of fresh visibility.
+- **Whether the target is inside my range, on every request.** Visibility is
+  not held (it must stay fresh), and a range is a band edge, so someone at
+  range 800 m can tell, per request instead of per 30 s, whether the target
+  is currently in the nearest band. This is band-level information, just
+  fresher than the held band; restarting at other ranges adds only the other
+  band edges (tested, see Broadcast ranges). Like every edge it is evaluated
+  on cell centres and limited by the 30/min request limit and the spoofing
+  envelope. A future option is an exit/entry cooldown, at the cost of fresh
+  visibility.
 - A patient spoofer comparing samples from many positions can locate a
   stationary target to roughly its 250 m cell within minutes; several accounts
-  multiply the sample rate. Moving targets are much harder.
+  multiply the sample rate. Moving targets are much harder. The tests show
+  that repeated probes inside a hold get one band sample and that range
+  restarts get nothing finer than the band edges; they do not show that a
+  target cannot be located.
 - Speaking events arrive over Realtime with the speaker's user id and live
   session id, only for speakers in the same nearby set.
 - Anyone who can physically see the person can of course place them.
@@ -221,19 +279,24 @@ Do not deploy as part of this PR. Order:
    then `supabase db push`. The deployed function keeps using v2 meanwhile.
    From this point open-channel speaking state already uses the Phase 2
    predicate.
-3. Expire older TestFlight builds, then `supabase functions deploy get-nearby-drivers`
+3. `supabase functions deploy start-live-session` (that one function). From
+   here new sessions store only 800 / 1600 / 3200 / 4800 m and old builds'
+   ¼ mi / 500 m starts are refused with a message. The database already
+   floors ranges from step 2, so this is the storage and messaging side.
+4. Expire older TestFlight builds, then `supabase functions deploy get-nearby-drivers`
    (that one function only; see `docs/SECURITY_LOCKDOWN.md` on why never a
    blanket deploy). Older builds then get an empty Nearby list: they would
    otherwise place drivers without a distance at a NaN map coordinate, which
    MapKit rejects (inferred from MapKit's behaviour, not reproduced on a
    device).
-4. Once no build older than step 1 is in use, delete `legacyDistanceToBand`
+5. Once no build older than step 1 is in use, delete `legacyDistanceToBand`
    and the legacy-request branch in `handler.ts`, and drop
    `get_nearby_drivers_v2` in a later migration.
 
 ## Rollback
 
-1. Redeploy the previous `get-nearby-drivers` (the Phase 1 version calls v2).
+1. Redeploy the previous `get-nearby-drivers` (the Phase 1 version calls v2)
+   and the previous `start-live-session` (accepts and stores 100–5000 as sent).
 2. Run `supabase/rollback/20260930000012_privacy_safe_proximity.down.sql`
    (SQL editor or `psql`), then delete the `20260930000012` row from
    `supabase_migrations.schema_migrations` if the CLI should re-apply it.
@@ -260,11 +323,56 @@ PGHOST=/tmp PGPORT=54399 PGUSER=postgres ROLLBACK_CHECK=1 scripts/db-test/run.sh
 # Edge Functions (esm.sh blocked? map the import to npm instead):
 #   deno.json: {"nodeModulesDir":"auto","imports":{"@supabase/supabase-js":"npm:@supabase/supabase-js@2.106.0"}}
 deno check --config deno.json supabase/functions/*/index.ts
-deno test  --config deno.json supabase/functions/get-nearby-drivers/handler.test.ts
+deno test  --config deno.json supabase/functions/get-nearby-drivers/handler.test.ts \
+                               supabase/functions/_shared/validate.test.ts
+
+# Performance fixture (after run.sh): plans and timings for v3
+PGHOST=/tmp PGPORT=54399 PGUSER=postgres scripts/db-test/perf.sh
+PERF_SPAN_KM=100 scripts/db-test/perf.sh   # a sparser, more realistic density
 ```
 
-Performance on the test machine: with 3 000 live users in a 22 km square
-(~470 candidates in range), v3 takes ~150 ms versus ~13 ms for v2; the cost is
-the per-candidate pair check (~0.14 ms each, which is also the per-event cost
-of the speaking-state policy). Realistic densities are far lower; a set-based
-v3 is the optimisation if it is ever needed.
+## Performance
+
+Measured with `scripts/db-test/perf.sh` on the sandbox Postgres 16 (warm
+cache, one connection), caller at the centre, all ranges 4800 m:
+
+| Fixture | Prefilter candidates | Visible | v3 (held) | v2 |
+|---|---|---|---|---|
+| 3 000 live in a 22 km square | 542 | 452 | ~105–135 ms | ~14 ms |
+| 3 000 live in a 100 km square | 22 | 20 | ~7.5–8.5 ms | ~6.5 ms |
+
+The first call for a caller is ~20 ms slower (hold inserts, cold plans).
+
+Plan (`EXPLAIN ANALYZE` via auto_explain, dense fixture):
+
+- Caller lookup: index scans on `location_presence_pkey`,
+  `live_sessions_one_active_per_user`, `profiles_pkey`; < 1 ms.
+- `candidates` (MATERIALIZED): Bitmap Index Scan on
+  `location_presence_location_gist` (906 rows for the expanded box, 0.1 ms),
+  Bitmap Heap Scan rechecking `ST_DWithin(range + 500 m)` (541 rows kept), then
+  `private.nearby_pair_band` once per row. **This is ~95% of the time**:
+  ~0.24 ms and ~20 buffer hits per candidate (six primary-key lookups for the
+  two presences, sessions and profiles, the blocks check on `blocks_pkey`, and
+  two plpgsql grid snaps).
+- `held`: `INSERT … ON CONFLICT` on `proximity_band_holds_pkey`, 451 rows,
+  ~5 ms.
+- Final join: `live_sessions_pkey`, `profiles_pkey`, `vehicles_pkey` per
+  held row, top-N heapsort by band and name; ~2.5 ms. The first draft joined
+  back to `candidates` (both CTEs estimated at one row), which planned as a
+  nested loop filtering 243 540 rows (~36 ms at this density, quadratic in
+  it). It now joins through the session owner; `candidates` is
+  `MATERIALIZED` so the pair check is not evaluated twice when inlined.
+- Open-channel speaking: one bitmap scan on `voice_sessions_expires_idx`.
+
+With 5 s foreground polling a live user costs 0.2 calls/s. At the sparse
+density that is ~1.6 ms of database time per live user per second
+(3 000 live users ≈ 5 CPU-seconds per second); at the dense one ~25 ms
+(3 000 live users ≈ 75 CPU-seconds per second), which one database would not
+sustain. Cost grows linearly with the drivers inside ~5.3 km of each caller.
+The same pair check also runs for each Realtime speaking event per
+subscriber (`can_view_open_voice`). No redesign is in this PR; if density
+ever approaches the dense fixture, the next step is set-based: snap the
+caller once, snap candidates in one pass, and check blocks with one
+anti-join instead of per-pair lookups (keeping `nearby_pair_band` as the
+single definition for the voice policy and asserting in tests that both
+agree). Reducing the poll rate while the list is unchanged would also help.

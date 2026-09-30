@@ -97,7 +97,15 @@ to exercise the permission gates from scratch.
 - [ ] No other driver is ever drawn on the map (Phase 2: RoadPing has no position or direction for them).
 - [ ] Nearby drivers appear only in the header count, the Nearby sheet and the speaker capsule.
 - [ ] A speaking driver shows in the speaker capsule with the same distance range as in Nearby.
-- [ ] Recenter button bottom-right snaps the map back to user after panning.
+- [ ] Before touching the map: it follows you, pitched, and turns with the phone's heading; the recenter button is highlighted.
+- [ ] Drag with one finger: the map pans and stays where you left it. It does not jump back on the next GPS fix or compass change, and the recenter button is no longer highlighted.
+- [ ] Pinch to zoom, two-finger rotate and two-finger tilt each work and each stop following in the same way.
+- [ ] A single tap on the map (no drag) does not stop following. If it does on a device, note it: the touch-cancel heuristic in NearbyMap may need tuning.
+- [ ] While browsing, the compass shows the map's heading as you rotated it, not the phone's.
+- [ ] Recenter returns to your position, pitched, resumes heading-follow, and the button is highlighted again.
+- [ ] Browse far away and back: no other driver appears anywhere on the map.
+- [ ] Range sheet offers ½ / 1 / 2 / 3 mi (800 m / 1.6 / 3.2 / 4.8 km in metric), nothing smaller.
+- [ ] Account whose saved default was ¼ mi (set one in the database): the dock shows "Set range", Go Live opens the range sheet, and nothing goes live until a range is picked.
 
 ## 12. Bottom sheet
 

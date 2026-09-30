@@ -295,7 +295,7 @@ export default function ProfileScreen() {
         </View>
       </ListSection>
 
-      <ListSection footer="They still see you on the map.">
+      <ListSection footer="They still see you in Nearby.">
         <ListSwitchRow
           icon="moon.fill"
           title="Do Not Disturb"

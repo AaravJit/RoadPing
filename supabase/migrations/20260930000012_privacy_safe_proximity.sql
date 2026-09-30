@@ -6,7 +6,9 @@
 --
 -- 1. public.distance_band: the only proximity value a client may receive
 -- 2. Server-side spatial quantization: both positions are snapped to a
---    ~250 m latitude-adaptive grid before any disclosed distance is computed
+--    ~250 m latitude-adaptive grid before any disclosed distance is computed;
+--    broadcast ranges are floored to the band edges (800 / 1600 / 3200 m)
+--    or the 4800 m maximum, so choosing a range reveals nothing finer
 -- 3. private.nearby_pair_band(caller, target): the single definition of
 --    "target is nearby for caller", used by get_nearby_drivers_v3 AND the
 --    open-channel speaking-state policy
@@ -156,22 +158,25 @@ AS $$
   )
 $$;
 
--- Largest fixed step <= p (the smallest step below it). Same steps as
--- RANGE_STEPS_M in supabase/functions/_shared/validate.ts; every app preset
--- is a step. A stored range that is not a step therefore buys no extra
--- boundary resolution.
+-- Effective broadcast range: the largest allowed step <= the stored range,
+-- or NULL below the smallest step. The steps are exactly the public band
+-- edges (800 / 1600 / 3200 m) plus one maximum range (4800 m, "3 mi"), so
+-- "is this driver in my range" can never say more than the band already
+-- does, however often someone restarts their session with a different range.
+-- Flooring never widens anyone's radius. A legacy stored range below 800 m
+-- has no step: that session is neither shown nor shown anyone (NULL makes
+-- the pair predicate false) until the user picks a range of ½ mi or more.
+-- Same steps as BROADCAST_RANGES_M in supabase/functions/_shared/validate.ts
+-- and the app presets in src/services/units.ts.
 CREATE OR REPLACE FUNCTION private.range_step_m(p integer)
 RETURNS integer
 LANGUAGE sql
 IMMUTABLE
 SET search_path = ''
 AS $$
-  SELECT COALESCE(
-    (SELECT max(s)
-     FROM unnest(ARRAY[100, 250, 400, 500, 800, 1000, 1600, 2000, 3000, 3200, 4800, 5000]) AS s
-     WHERE s <= p),
-    100
-  )
+  SELECT max(s)
+  FROM unnest(ARRAY[800, 1600, 3200, 4800]) AS s
+  WHERE s <= p
 $$;
 
 
@@ -184,6 +189,7 @@ $$;
 --   • target: same, and not banned or shadow-banned, and not the caller
 --   • no block in either direction
 --   • quantized distance <= the smaller of both stepped broadcast ranges
+--     (steps are band edges, so this reveals nothing finer than the band)
 -- Both get_nearby_drivers_v3 and the open-channel voice policy use this, so
 -- speaking state is never visible for someone the nearby list would omit.
 -- Not SECURITY DEFINER and not client-executable: it is only reached through
@@ -220,7 +226,12 @@ AS $$
   CROSS JOIN LATERAL (
     SELECT
       private.quantized_distance_m(me.location, them.location) AS distance_m,
-      LEAST(private.range_step_m(ms.range_m), private.range_step_m(ts.range_m)) AS range_m
+      -- Not a bare LEAST(): it skips NULLs, which would widen a sub-800 m
+      -- range. Either side without a range makes the pair invisible.
+      CASE WHEN private.range_step_m(ms.range_m) IS NULL
+             OR private.range_step_m(ts.range_m) IS NULL THEN NULL
+           ELSE LEAST(private.range_step_m(ms.range_m), private.range_step_m(ts.range_m))
+      END AS range_m
   ) q
   WHERE me.user_id    = p_caller
     AND me.expires_at > now()
@@ -328,7 +339,7 @@ BEGIN
   WHERE lp.user_id    = p_caller_id
     AND lp.expires_at > now();
 
-  IF NOT FOUND THEN
+  IF NOT FOUND OR v_me_range IS NULL THEN
     RETURN;
   END IF;
 
@@ -337,10 +348,11 @@ BEGIN
   v_max_band := private.distance_band_for(v_me_range);
 
   RETURN QUERY
-  WITH candidates AS (
-    -- Index-assisted superset; nearby_pair_band decides.
+  WITH candidates AS MATERIALIZED (
+    -- Index-assisted superset; nearby_pair_band decides. MATERIALIZED so
+    -- the pair check runs once per candidate (inlined, it would run in both
+    -- the filter and the select list).
     SELECT
-      lp.user_id    AS target_id,
       lp.session_id AS target_session_id,
       private.nearby_pair_band(p_caller_id, lp.user_id) AS fresh_band
     FROM public.location_presence lp
@@ -387,13 +399,14 @@ BEGIN
         AND  (vs.expires_at     IS NULL OR vs.expires_at > now())
     ),
     p.dnd_mode
+  -- Join through the session's owner rather than back to candidates: the
+  -- CTEs are estimated at one row, and a nested loop over candidates grows
+  -- quadratically with density (see Performance in the design doc).
   FROM held
-  JOIN candidates c
-    ON  c.target_session_id = held.target_session_id
-  JOIN public.profiles p
-    ON  p.id = c.target_id
   JOIN public.live_sessions ls
-    ON  ls.id = c.target_session_id
+    ON  ls.id = held.target_session_id
+  JOIN public.profiles p
+    ON  p.id = ls.user_id
   LEFT JOIN public.vehicles v
     ON  v.id = ls.vehicle_id
   ORDER BY held.band, lower(p.display_name), p.id

@@ -132,7 +132,8 @@ a sheet with handle). Stack of:
 
 1. **Primary vehicle shortcut row** — 28pt vehicle emoji, label
    ("Midnight Blue Tesla Model 3"), `2018 Tesla Model 3` sub, chevron.
-2. **Range selector** (chips: 500 m / 1 km / 2 km / 3 km / 5 km, the active
+2. **Range selector** (chips: ½ mi / 1 mi / 2 mi / 3 mi, or 800 m / 1.6 km /
+   3.2 km / 4.8 km in metric; the active
    chip uses orange muted fill + orange border + orange text).
 3. **Do Not Disturb row** — toggle.
 4. **Location permission card** (only when not granted) — `Colors.surfaceElevated`

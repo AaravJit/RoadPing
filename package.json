@@ -47,7 +47,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "test:proximity": "node --test scripts/client-test/proximity.test.mjs"
+    "test:proximity": "node --test scripts/client-test/proximity.test.mjs scripts/client-test/ranges.test.mjs"
   },
   "private": true
 }

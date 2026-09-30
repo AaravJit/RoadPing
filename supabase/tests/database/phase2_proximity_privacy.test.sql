@@ -7,7 +7,7 @@
 -- Everything runs in one transaction, so now() is constant: hold expiry is
 -- simulated by moving held_until into the past.
 BEGIN;
-SELECT plan(88);
+SELECT plan(101);
 
 -- ── Helpers ─────────────────────────────────────────────────────────────────
 -- Positions are expressed in grid rows north of a row centre near 37°N, on
@@ -158,9 +158,18 @@ SELECT is(
 
 SELECT is(
   (SELECT array_agg(private.range_step_m(r) ORDER BY i)
-   FROM unnest(ARRAY[100, 101, 399, 400, 1234, 3199, 4800, 4999, 5000]) WITH ORDINALITY AS x(r, i)),
-  ARRAY[100, 100, 250, 400, 1000, 3000, 4800, 4800, 5000],
-  'stored ranges are floored to the fixed steps');
+   FROM unnest(ARRAY[100, 400, 500, 799, 800, 1000, 1599, 1600, 2000, 3000, 3199, 3200, 4799, 4800, 5000]) WITH ORDINALITY AS x(r, i)),
+  ARRAY[NULL, NULL, NULL, NULL, 800, 800, 800, 1600, 1600, 1600, 1600, 3200, 3200, 4800, 4800]::int[],
+  'stored ranges floor to a band edge (800/1600/3200) or the 4800 m maximum; below 800 m there is no range');
+
+SELECT is(
+  (SELECT array_agg(DISTINCT private.range_step_m(r)) FROM generate_series(100, 5000) r),
+  ARRAY[800, 1600, 3200, 4800, NULL]::int[],
+  'no stored value 100-5000 yields any other effective range');
+
+SELECT is_empty(
+  $$ SELECT r FROM generate_series(800, 5000) r WHERE private.range_step_m(r) > r $$,
+  'flooring never widens a range');
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -266,7 +275,7 @@ SELECT ok(
 -- 13 kim    row 2, presence expired
 -- 14 lou    row 2, live session expired
 -- 15 max    not live
--- 16 ned    row 20 (~4990 m)           beyond_3200m (max range)
+-- 16 ned    row 19 (~4740 m)           beyond_3200m (max range 4800)
 
 SELECT pg_temp.mk_user(n, name) FROM (VALUES
   (1,'alice'),(2,'zed'),(3,'amy'),(4,'bob'),(5,'cat'),(6,'dee'),(7,'eve'),(8,'fay'),
@@ -274,7 +283,7 @@ SELECT pg_temp.mk_user(n, name) FROM (VALUES
 
 SELECT pg_temp.go_live(n, r, rng) FROM (VALUES
   (1,0,5000),(2,2,5000),(3,3,5000),(4,5,5000),(5,10,5000),(6,16,5000),(7,21,5000),(8,5,800),
-  (9,2,5000),(10,2,5000),(11,2,5000),(12,2,5000),(13,2,5000),(14,2,5000),(16,20,5000)) v(n, r, rng);
+  (9,2,5000),(10,2,5000),(11,2,5000),(12,2,5000),(13,2,5000),(14,2,5000),(16,19,5000)) v(n, r, rng);
 
 UPDATE public.profiles SET is_banned = true        WHERE id = pg_temp.u(9);
 UPDATE public.profiles SET is_shadow_banned = true WHERE id = pg_temp.u(10);
@@ -293,8 +302,8 @@ SELECT user_id, id, true FROM public.live_sessions WHERE status = 'active' AND u
 
 SELECT ok(pg_temp.qdist(1, 3) > pg_temp.qdist(1, 2),
   'precondition: amy is farther than zed');
-SELECT ok(pg_temp.qdist(1, 16) <= 5000 AND pg_temp.qdist(1, 7) > 5000,
-  'precondition: ned is just inside 5000 m and eve just outside (quantized)');
+SELECT ok(pg_temp.qdist(1, 16) <= 4800 AND pg_temp.qdist(1, 7) > 4800,
+  'precondition: ned is just inside 4800 m and eve just outside (quantized)');
 
 SELECT is(pg_temp.names(1),
   ARRAY['amy', 'zed', 'bob', 'cat', 'dee', 'ned'],
@@ -470,24 +479,47 @@ SELECT pg_temp.move(8, 3);
 SELECT ok('fay' = ANY (pg_temp.names(1)), 'fay within both ranges is visible');
 SELECT pg_temp.move(8, 5);
 
--- max: a caller with the minimum step only sees people in the same cell.
+-- min: a caller with the smallest range (800 m) sees the within_800m band
+-- and nothing past it.
 SELECT pg_temp.mk_user(20, 'oli');
 SELECT pg_temp.mk_user(21, 'pam');
-SELECT pg_temp.go_live(20, 40.2, 100);
+SELECT pg_temp.go_live(20, 40.2, 800);
 SELECT pg_temp.go_live(21, 40.0, 5000);
 SELECT is(pg_temp.qdist(20, 21), 0::float8, 'precondition: oli and pam share a cell');
-SELECT is(pg_temp.band(20, 21), 'within_800m'::public.distance_band, 'min range (100 m): same-cell driver visible');
-SELECT pg_temp.move(21, 41.0);
-SELECT is(pg_temp.names(20), '{}'::text[], 'min range: a driver one cell away is not');
+SELECT is(pg_temp.band(20, 21), 'within_800m'::public.distance_band, 'min range (800 m): same-cell driver visible');
+SELECT pg_temp.move(21, 43.0);
+SELECT is(pg_temp.band(20, 21), 'within_800m'::public.distance_band, 'min range: a driver three cells away (~750 m) visible');
+SELECT pg_temp.move(21, 44.0);
+SELECT is(pg_temp.names(20), '{}'::text[], 'min range: a driver four cells away (~1000 m, 800-1600 band) is not');
+
+-- A legacy stored range below 800 m is never widened: that session is
+-- neither shown nor shown anyone, even in the same cell.
+SELECT pg_temp.stop(20);
+SELECT pg_temp.go_live(20, 40.0, 400);
+SELECT pg_temp.move(21, 40.0);
+SELECT is(pg_temp.names(20), '{}'::text[], 'a legacy 400 m session sees nobody (not widened to 800 m)');
+SELECT ok(NOT ('oli' = ANY (pg_temp.names(21))), 'and nobody sees a legacy 400 m session');
+INSERT INTO public.voice_sessions (user_id, live_session_id, is_speaking)
+VALUES (pg_temp.u(21), pg_temp.sid(21), true), (pg_temp.u(20), pg_temp.sid(20), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_temp.as_user(pg_temp.u(20));
+SELECT is_empty($$ SELECT 1 FROM public.voice_sessions WHERE user_id = pg_temp.u(21) $$,
+  'a legacy 400 m caller gets no speaking state either');
+SELECT pg_temp.as_user(pg_temp.u(21));
+SELECT is_empty($$ SELECT 1 FROM public.voice_sessions WHERE user_id = pg_temp.u(20) $$,
+  'and nobody gets a legacy 400 m speaker''s state');
+RESET ROLE;
 SELECT pg_temp.stop(20);
 SELECT pg_temp.stop(21);
 
--- A stored range that is not a step gives no extra resolution.
+-- A stored range that is not an allowed range gives no extra resolution.
 SELECT pg_temp.mk_user(22, 'quin');
-SELECT pg_temp.go_live(22, 0.1, 4999);
-SELECT ok(pg_temp.qdist(22, 16) BETWEEN 4800 AND 4999,
-  'precondition: ned is between 4800 and 4999 m from quin');
-SELECT ok(NOT ('ned' = ANY (pg_temp.names(22))), 'a 4999 m range behaves as the 4800 m step');
+SELECT pg_temp.go_live(22, 0.1, 5000);
+SELECT pg_temp.move(16, 20);
+SELECT ok(pg_temp.qdist(22, 16) BETWEEN 4800 AND 5000,
+  'precondition: ned is between 4800 and 5000 m from quin');
+SELECT ok(NOT ('ned' = ANY (pg_temp.names(22))), 'a 5000 m stored range behaves as the 4800 m maximum');
+SELECT pg_temp.move(16, 19);
 SELECT pg_temp.stop(22);
 
 
@@ -647,6 +679,81 @@ SELECT isnt(pg_temp.band(30, 31), NULL, 'after the hold the attacker gets exactl
 SELECT is(
   (SELECT count(*)::int FROM private.proximity_band_holds WHERE caller_id = pg_temp.u(30)),
   1, 'and there is still one hold row for the pair');
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 13. Range-edge oracle: restarting at every range reveals only the band
+-- ═══════════════════════════════════════════════════════════════════════════
+-- The attacker (xan) restarts a session at EVERY range the request
+-- validator accepts (100-5000 m in 50 m steps, plus every old app preset)
+-- against a target (yul, max range) placed at every cell from 0 to ~5.5 km.
+-- For each placement we record which ranges show the target. If ranges
+-- could split a band, two placements in one band would give different
+-- present/absent vectors. Holds are cleared before every call so nothing is
+-- masked by the 30 s hold: this tests the visibility edge alone.
+
+SELECT pg_temp.mk_user(40, 'xan');   -- attacker
+SELECT pg_temp.mk_user(41, 'yul');   -- target
+SELECT pg_temp.go_live(41, 500.0, 5000);
+
+CREATE TEMP TABLE probe_ranges AS
+  SELECT DISTINCT r FROM (
+    SELECT generate_series(100, 5000, 50) AS r
+    UNION ALL SELECT unnest(ARRAY[250, 400, 500, 800, 1000, 1600, 2000, 3000, 3200, 4800, 4999, 5000])
+  ) x;
+CREATE TEMP TABLE range_probe (k int, r int, present boolean, fresh public.distance_band);
+
+DO $$
+DECLARE
+  v_r int;
+BEGIN
+  FOR k IN 0..22 LOOP
+    FOR v_r IN SELECT r FROM probe_ranges ORDER BY r LOOP
+      PERFORM pg_temp.stop(40);
+      PERFORM pg_temp.go_live(40, 500.0 + k, v_r);
+      PERFORM pg_temp.expire_holds();
+      INSERT INTO range_probe
+      SELECT k, v_r, 'yul' = ANY (pg_temp.names(40)),
+             private.distance_band_for(pg_temp.qdist(40, 41));
+    END LOOP;
+  END LOOP;
+END
+$$;
+
+SELECT is((SELECT count(*)::int FROM range_probe), 23 * (SELECT count(*)::int FROM probe_ranges),
+  'precondition: 23 placements x every accepted range (100 distinct values) probed with a restart each');
+SELECT is(
+  (SELECT array_agg(DISTINCT fresh ORDER BY fresh) FROM range_probe),
+  ARRAY['within_800m', '800m_to_1600m', '1600m_to_3200m', 'beyond_3200m']::public.distance_band[],
+  'precondition: placements cover every band');
+
+-- Per placement: the full present/absent vector across all ranges, and the
+-- class the public contract already discloses (its band, or out of range).
+CREATE TEMP TABLE range_vectors AS
+  SELECT k,
+         CASE WHEN bool_or(present) THEN min(fresh::text) ELSE 'out_of_range' END AS cls,
+         string_agg(CASE WHEN present THEN '1' ELSE '0' END, '' ORDER BY r) AS vec
+  FROM range_probe GROUP BY k;
+
+SELECT is_empty(
+  $$ SELECT cls FROM range_vectors GROUP BY cls HAVING count(DISTINCT vec) > 1 $$,
+  'every placement in one band gives the same present/absent vector across all ranges');
+SELECT results_eq(
+  $$ SELECT count(DISTINCT vec)::int, count(DISTINCT cls)::int FROM range_vectors $$,
+  $$ VALUES (5, 5) $$,
+  'restarting at every range separates exactly 5 classes: the 4 bands and out of range');
+SELECT is_empty(
+  $$ SELECT 1 FROM range_probe p JOIN range_vectors v USING (k)
+     WHERE p.present IS DISTINCT FROM (
+       v.cls <> 'out_of_range'
+       AND private.range_step_m(p.r) IS NOT NULL
+       AND p.fresh <= private.distance_band_for(private.range_step_m(p.r))) $$,
+  'present at range R exactly when the target''s band is within R''s band: no edge finer than a band');
+SELECT is_empty(
+  $$ SELECT 1 FROM range_probe WHERE r < 800 AND present $$,
+  'ranges below 800 m never show anyone, even in the same cell');
+
+SELECT pg_temp.stop(40);
+SELECT pg_temp.stop(41);
 
 SELECT * FROM finish();
 ROLLBACK;

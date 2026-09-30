@@ -51,7 +51,9 @@ distance range, such as "½–1 mi" or "0.8–1.6 km". Our servers work that ran
 out from positions snapped to a coarse grid (about 250 m) and keep it the same
 for about 30 seconds at a time. A broad range still says you are somewhere
 nearby: someone who can see you on the road, or who keeps comparing ranges
-while moving around, may be able to narrow down roughly where you are. Use
+while moving around, may be able to narrow down roughly where you are. The
+ranges you can choose (½, 1, 2 or 3 mi) sit on the same edges as these
+distance ranges, so changing your own range never tells anyone more. Use
 Private Zones and Stop & Hide wherever that matters to you.
 
 ## Microphone and voice

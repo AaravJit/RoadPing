@@ -85,24 +85,42 @@ export interface RangePreset {
 }
 
 /**
- * Broadcast-range presets per unit system. Values stay in metres so the backend
- * is untouched; labels are clean round numbers in the chosen system.
+ * The only broadcast ranges the server stores (metres): the distance-band
+ * edges (½, 1, 2 mi) plus one maximum (3 mi). Same list as
+ * BROADCAST_RANGES_M in supabase/functions/_shared/validate.ts and
+ * private.range_step_m in migration 012. Because every range is a band edge,
+ * whether someone is "in range" never says more than their distance band.
+ */
+export const BROADCAST_RANGES_M = [800, 1600, 3200, 4800] as const;
+
+/**
+ * The allowed range a stored value means: the largest allowed range at or
+ * below it (never wider than what the user chose), or null below ½ mi. Older
+ * builds could save ¼ mi / 500 m; those users must pick a range again.
+ */
+export function broadcastRangeFor(meters: number): number | null {
+  let step: number | null = null;
+  for (const s of BROADCAST_RANGES_M) if (s <= meters) step = s;
+  return step;
+}
+
+/**
+ * Broadcast-range presets per unit system. Values are the allowed ranges in
+ * metres; labels are round numbers in the chosen system.
  */
 export function rangePresetsFor(system: UnitSystem): readonly RangePreset[] {
   return system === 'imperial'
     ? [
-        { label: '¼ mi', value: 400 },
         { label: '½ mi', value: 800 },
         { label: '1 mi', value: 1600 },
         { label: '2 mi', value: 3200 },
         { label: '3 mi', value: 4800 },
       ]
     : [
-        { label: '500 m', value: 500 },
-        { label: '1 km', value: 1000 },
-        { label: '2 km', value: 2000 },
-        { label: '3 km', value: 3000 },
-        { label: '5 km', value: 5000 },
+        { label: '800 m', value: 800 },
+        { label: '1.6 km', value: 1600 },
+        { label: '3.2 km', value: 3200 },
+        { label: '4.8 km', value: 4800 },
       ];
 }
 

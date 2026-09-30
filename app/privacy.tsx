@@ -67,8 +67,10 @@ export default function PrivacyScreen() {
             about 30 seconds at a time. A broad range still says you are
             somewhere nearby: someone who can see you on the road, or who keeps
             comparing ranges while moving around, may be able to narrow down
-            roughly where you are. Use Private Zones and Stop & Hide wherever
-            that matters to you.
+            roughly where you are. The ranges you can choose (½, 1, 2 or 3 mi)
+            sit on the same edges as these distance ranges, so changing your
+            own range never tells anyone more. Use Private Zones and Stop &
+            Hide wherever that matters to you.
           </P>
         </DocSection>
 
