@@ -49,13 +49,39 @@ and the hosted project's Data API settings), so `authenticated` can execute
 those helpers inside policy evaluation and Realtime, but no client can call
 them. The private helpers take no user id: they read `auth.uid()`.
 
-Defaults: `ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS
-FROM anon, authenticated` removes Supabase's explicit grant for future
-functions. The implicit `PUBLIC` grant can only be removed globally (it would
-also hit extension functions), so it is not changed; instead the pgTAP test
-fails if any `SECURITY DEFINER` function in `public` is executable by `anon` or
-`authenticated`. New DEFINER functions must `REVOKE ... FROM PUBLIC, anon,
-authenticated` explicitly.
+All functions created or replaced by 010 use `SET search_path = ''` and
+schema-qualify every relation, type and non-catalog function.
+
+### Default privileges for future functions
+
+Invariant: a new function created by the migration role (`postgres`) is not
+client-executable just because someone forgot a `REVOKE`. Two defaults grant
+it today, and 010 removes both:
+
+1. Supabase's per-schema default `GRANT EXECUTE ... TO anon, authenticated` in
+   `public`: `ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON
+   FUNCTIONS FROM anon, authenticated`.
+2. Postgres's built-in `EXECUTE` to `PUBLIC`. Per-schema default privileges
+   are *added* to the global ones and cannot subtract from them, so
+   `ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM
+   PUBLIC` is a no-op: it creates no `pg_default_acl` row and the next function
+   is still executable by `anon` (verified on Postgres 16). The revoke therefore
+   has to be role-wide: `ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS
+   FROM PUBLIC` (no `IN SCHEMA`), which applies only to functions this role
+   creates from now on.
+
+Scope, verified locally: functions created before the change keep their
+grants; functions created by other roles (Supabase's `supabase_admin`,
+`supabase_auth_admin`, ...) are unaffected; an extension installed by
+`postgres` into `extensions` stays executable because 010 re-adds
+`IN SCHEMA extensions GRANT EXECUTE ... TO PUBLIC`. It does apply to every
+other schema the role creates functions in (`private`, `pg_temp`, an extension
+installed into `public`). `service_role` keeps Supabase's per-schema grant in
+`public`, so new Edge Function helpers need no extra grant. A new function meant
+for clients (for example an RLS helper called by `authenticated`, or an Auth
+hook) needs an explicit `GRANT EXECUTE`. The pgTAP test still fails if any
+`SECURITY DEFINER` function in `public` is executable by `anon` or
+`authenticated`, as a second line of defence.
 
 ## Policy changes
 
@@ -92,6 +118,27 @@ Realtime (`src/services/voice.ts:220`).
 - Banned callers get 403 from nearby; a banned user's heartbeat ends the session.
 - Distances are still rounded to 50 m. Snapping to a grid / distance bands is
   Task 2 and is what closes slow trilateration by a GPS-spoofing account.
+
+## Live-session lifecycle contract
+
+Chosen behaviour: a bounded reconnect grace, enforced identically by the
+heartbeat and the cleanup job (`private.live_session_grace()` = 35 s), so cron
+timing never decides whether a session survives.
+
+| Time since `expires_at` (25 s after the last accepted heartbeat) | Visible to others | Heartbeat |
+|---|---|---|
+| before it | yes | extends the session |
+| 0 – 35 s after (reconnect window) | **no** | resumes the same session |
+| more than 35 s after | no | ends it as `expired`, returns NULL (Edge: 404); the client must start a new session |
+
+The cleanup job deletes presence and expires sessions at the same 35 s
+boundary. A driver is therefore never visible with a stale position, a tunnel
+or a lost signal of up to about a minute since the last heartbeat recovers
+without a new session, and nothing older can be revived. Why not "expiry is
+authoritative": with a 12 s heartbeat and 25 s expiry, a single slow or missed
+heartbeat would kill the session, and today's app does not recover from that
+(it keeps showing LIVE). The grace only affects resumption; visibility is
+still cut at `expires_at`.
 
 ## Location jump handling
 

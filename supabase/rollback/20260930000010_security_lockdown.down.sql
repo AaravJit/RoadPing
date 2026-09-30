@@ -12,6 +12,8 @@ BEGIN;
 
 -- ── Function privileges back to Postgres/Supabase defaults ──────────────────
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated;
+ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO PUBLIC;
+ALTER DEFAULT PRIVILEGES IN SCHEMA extensions REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 
 GRANT EXECUTE ON FUNCTION public.handle_new_user()                                  TO PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.handle_new_room()                                  TO PUBLIC, anon, authenticated;

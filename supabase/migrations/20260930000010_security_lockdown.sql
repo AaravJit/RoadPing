@@ -12,8 +12,15 @@
 -- 6. get_nearby_drivers_v2: query from the caller's stored presence, expiry
 --    and mutual range enforced
 -- 7. consume_rate_limit for Edge Function throttling
--- 8. Revoke EXECUTE on every SECURITY DEFINER function in public from
---    PUBLIC / anon / authenticated; grant Edge helpers to service_role only
+-- 8. Live-session lifecycle: bounded reconnect grace, enforced in the
+--    heartbeat and the cleanup job alike
+-- 9. Revoke EXECUTE on every SECURITY DEFINER function in public from
+--    PUBLIC / anon / authenticated; grant Edge helpers to service_role only;
+--    new functions created by the migration role are not client-executable
+--    by default
+--
+-- Every function created or replaced here uses SET search_path = '' and
+-- schema-qualifies every relation, type and non-catalog function.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -28,12 +35,27 @@ REVOKE ALL ON SCHEMA private FROM PUBLIC;
 -- exposed schemas, so clients cannot call these directly.
 GRANT USAGE ON SCHEMA private TO authenticated, service_role;
 
+-- Live-session lifecycle contract (docs/SECURITY_LOCKDOWN.md):
+--   • visible to others only while now() < expires_at (25 s after the last
+--     accepted heartbeat);
+--   • reconnect window: until expires_at + this grace, a heartbeat resumes
+--     the SAME session (the driver was hidden meanwhile);
+--   • after that the session is dead: a heartbeat ends it as 'expired' and
+--     returns NULL, and the client must start a new session. The cleanup job
+--     sweeps at the same boundary, so cron timing never decides the outcome.
+CREATE OR REPLACE FUNCTION private.live_session_grace()
+RETURNS interval
+LANGUAGE sql
+IMMUTABLE
+SET search_path = ''
+AS $$ SELECT INTERVAL '35 seconds' $$;
+
 CREATE OR REPLACE FUNCTION private.is_room_member(p_room uuid)
 RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
   SELECT EXISTS (
     SELECT 1
@@ -48,7 +70,7 @@ RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
   SELECT EXISTS (
     SELECT 1
@@ -67,7 +89,7 @@ RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
   SELECT EXISTS (
     SELECT 1
@@ -105,6 +127,7 @@ $$;
 REVOKE ALL ON FUNCTION private.is_room_member(uuid)      FROM PUBLIC;
 REVOKE ALL ON FUNCTION private.is_room_owner(uuid)       FROM PUBLIC;
 REVOKE ALL ON FUNCTION private.can_view_open_voice(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION private.live_session_grace()      FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION private.is_room_member(uuid)      TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION private.is_room_owner(uuid)       TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION private.can_view_open_voice(uuid) TO authenticated, service_role;
@@ -210,7 +233,7 @@ CREATE OR REPLACE FUNCTION public.upsert_location_presence(
 RETURNS timestamptz
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
 DECLARE
   v_expires_at timestamptz := now() + INTERVAL '25 seconds';
@@ -243,8 +266,9 @@ END;
 $$;
 
 -- Returns the new expires_at, or NULL when there is no active session with a
--- presence row for (p_user_id, p_session_id). An implausible jump keeps the
--- session alive at the last accepted position (see docs/SECURITY_LOCKDOWN.md).
+-- presence row for (p_user_id, p_session_id), or when the session is past its
+-- reconnect grace (it is then ended as 'expired'). An implausible jump keeps
+-- the session alive at the last accepted position (docs/SECURITY_LOCKDOWN.md).
 CREATE OR REPLACE FUNCTION public.update_location_heartbeat(
   p_user_id    uuid,
   p_session_id uuid,
@@ -254,7 +278,7 @@ CREATE OR REPLACE FUNCTION public.update_location_heartbeat(
 RETURNS timestamptz
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
 DECLARE
   -- Two independent ~100 m "Balanced" fixes plus Wi-Fi/cell fallback noise.
@@ -264,8 +288,9 @@ DECLARE
   c_confirm_reports     constant smallint         := 3;
   c_confirm_min_span    constant interval         := INTERVAL '20 seconds';
 
-  v_expires_at timestamptz := now() + INTERVAL '25 seconds';
-  v_new        extensions.geography;
+  v_expires_at         timestamptz := now() + INTERVAL '25 seconds';
+  v_session_expires_at timestamptz;
+  v_new                extensions.geography;
   v_row        public.location_presence%ROWTYPE;
   v_elapsed_s  double precision;
   v_count      smallint;
@@ -275,21 +300,31 @@ BEGIN
              extensions.ST_MakePoint(p_lng, p_lat), 4326
            )::extensions.geography;
 
-  PERFORM 1
-  FROM public.live_sessions
-  WHERE id      = p_session_id
-    AND user_id = p_user_id
-    AND status  = 'active';
-  IF NOT FOUND THEN
-    RETURN NULL;
-  END IF;
-
+  -- Lock presence, then the session: the same order end_live_session and
+  -- expire_stale_sessions use, so a concurrent stop or sweep serialises with
+  -- this heartbeat instead of deadlocking.
   SELECT * INTO v_row
   FROM public.location_presence
   WHERE user_id    = p_user_id
     AND session_id = p_session_id
   FOR UPDATE;
   IF NOT FOUND THEN
+    RETURN NULL;
+  END IF;
+
+  SELECT expires_at INTO v_session_expires_at
+  FROM public.live_sessions
+  WHERE id      = p_session_id
+    AND user_id = p_user_id
+    AND status  = 'active'
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN NULL;
+  END IF;
+
+  -- Past the reconnect grace: the session is dead, whatever cron has done.
+  IF now() > v_session_expires_at + private.live_session_grace() THEN
+    PERFORM public.end_live_session(p_session_id, p_user_id, 'expired'::public.session_ended_reason);
     RETURN NULL;
   END IF;
 
@@ -380,7 +415,7 @@ RETURNS TABLE (
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
   WITH me AS (
     SELECT lp.location
@@ -472,7 +507,7 @@ CREATE OR REPLACE FUNCTION public.consume_rate_limit(
 RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
 DECLARE
   v_window timestamptz;
@@ -500,14 +535,15 @@ $$;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- 8. Cleanup job: also purge ended voice rows and old rate-limit windows
+-- 8. Cleanup job: reconnect grace, purge ended voice rows and old rate-limit
+--    windows
 -- ═══════════════════════════════════════════════════════════════════════════
 
 CREATE OR REPLACE FUNCTION public.expire_stale_sessions()
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
 DECLARE
   v_expired_voice    int;
@@ -528,22 +564,24 @@ BEGIN
   )
   SELECT COUNT(*) INTO v_expired_voice FROM updated;
 
-  -- Step 1: Remove stale location presence rows
+  -- Step 1: Remove presence rows past the reconnect grace. (Queries already
+  -- hide presence as soon as expires_at passes.)
   WITH deleted AS (
     DELETE FROM public.location_presence
-    WHERE expires_at < now()
+    WHERE expires_at < now() - private.live_session_grace()
     RETURNING user_id
   )
   SELECT COUNT(*) INTO v_deleted_presence FROM deleted;
 
-  -- Step 2: Mark stale active sessions as expired
+  -- Step 2: Expire active sessions past the reconnect grace (same boundary
+  -- update_location_heartbeat enforces)
   WITH updated AS (
     UPDATE public.live_sessions SET
       status       = 'expired',
       ended_at     = now(),
       ended_reason = 'expired'
     WHERE status     = 'active'
-      AND expires_at < now()
+      AND expires_at < now() - private.live_session_grace()
     RETURNING id
   )
   SELECT COUNT(*) INTO v_expired_sessions FROM updated;
@@ -601,7 +639,20 @@ GRANT EXECUTE ON FUNCTION public.get_nearby_drivers(double precision, double pre
 GRANT EXECUTE ON FUNCTION public.get_nearby_drivers_v2(uuid, integer)                                     TO service_role;
 GRANT EXECUTE ON FUNCTION public.consume_rate_limit(uuid, text, integer, integer)                         TO service_role;
 
--- Stop Supabase's default grant to anon/authenticated on future functions in
--- public. (The implicit PUBLIC grant can only be changed globally; the pgTAP
--- test in supabase/tests/database guards that instead.)
+-- Future functions created by this (the migration) role must not become
+-- client-executable because someone forgot a REVOKE.
+--
+-- 1. Remove Supabase's per-schema default grant to anon/authenticated in public.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM anon, authenticated;
+-- 2. Remove the built-in EXECUTE-to-PUBLIC default. Postgres only allows this
+--    without IN SCHEMA: per-schema default privileges are added to the global
+--    ones and cannot subtract from them (an IN SCHEMA ... FROM PUBLIC revoke
+--    is a no-op). It is scoped to objects this role creates from now on:
+--    existing functions and other roles' functions are unchanged.
+ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+-- 3. Keep extension functions this role installs into `extensions` (e.g. a
+--    future PostGIS update) executable by everyone, as they are today.
+ALTER DEFAULT PRIVILEGES IN SCHEMA extensions GRANT EXECUTE ON FUNCTIONS TO PUBLIC;
+-- service_role keeps Supabase's per-schema default grant in public, so new
+-- Edge Function helpers work without an explicit GRANT. A new function meant
+-- for clients needs an explicit GRANT EXECUTE ... TO authenticated.

@@ -1,7 +1,7 @@
 -- pgTAP: migration 010 security lockdown + trusted proximity.
 -- Run with `supabase test db`, or scripts/db-test/run.sh without Docker.
 BEGIN;
-SELECT plan(35);
+SELECT plan(47);
 
 -- ── Fixtures (as the migration owner, bypassing RLS) ─────────────────────────
 -- Around (37.0, -122.0). 0.0045° latitude ≈ 500 m.
@@ -26,6 +26,9 @@ CREATE FUNCTION pg_temp.as_user(p_id uuid) RETURNS void
 LANGUAGE sql AS $$
   SELECT set_config('request.jwt.claims', json_build_object('sub', p_id, 'role', 'authenticated')::text, true);
 $$;
+-- Migration 010 removes the default EXECUTE-to-PUBLIC for functions this
+-- role creates (in any schema, pg_temp included), so grant it explicitly.
+GRANT EXECUTE ON FUNCTION pg_temp.as_user(uuid) TO authenticated;
 
 SELECT pg_temp.mk_user('00000000-0000-0000-0000-00000000000a', 'alice');   -- caller
 SELECT pg_temp.mk_user('00000000-0000-0000-0000-00000000000b', 'bob');     -- 500 m, visible
@@ -257,6 +260,55 @@ LANGUAGE sql AS $$
   FROM public.live_sessions ls WHERE ls.user_id = p_user AND ls.status = 'active';
 $$;
 
+-- ── 7a. Live-session lifecycle: bounded reconnect grace (35 s) ─────────────
+
+-- bob: 10 s past expiry, inside the grace
+UPDATE public.live_sessions     SET expires_at = now() - INTERVAL '10 seconds' WHERE user_id = '00000000-0000-0000-0000-00000000000b';
+UPDATE public.location_presence SET expires_at = now() - INTERVAL '10 seconds' WHERE user_id = '00000000-0000-0000-0000-00000000000b';
+-- dan and erin: 40 s past expiry, beyond the grace
+UPDATE public.live_sessions     SET expires_at = now() - INTERVAL '40 seconds'
+WHERE user_id IN ('00000000-0000-0000-0000-00000000000d', '00000000-0000-0000-0000-00000000000e');
+UPDATE public.location_presence SET expires_at = now() - INTERVAL '40 seconds'
+WHERE user_id IN ('00000000-0000-0000-0000-00000000000d', '00000000-0000-0000-0000-00000000000e');
+
+SELECT is_empty(
+  $$ SELECT 1 FROM public.get_nearby_drivers_v2('00000000-0000-0000-0000-00000000000a', 5000) $$,
+  'a driver past expires_at is hidden immediately, even inside the grace');
+
+SELECT public.expire_stale_sessions();
+
+SELECT is((SELECT status::text FROM public.live_sessions WHERE user_id = '00000000-0000-0000-0000-00000000000b' ORDER BY started_at DESC LIMIT 1),
+  'active', 'cleanup leaves a session inside the grace alone');
+SELECT is((SELECT status::text FROM public.live_sessions WHERE user_id = '00000000-0000-0000-0000-00000000000e' ORDER BY started_at DESC LIMIT 1),
+  'expired', 'cleanup expires a session past the grace');
+
+SELECT isnt(pg_temp.hb('00000000-0000-0000-0000-00000000000b', 37.0045, -122.0), NULL,
+  'a heartbeat inside the grace resumes the same session');
+SELECT results_eq(
+  $$ SELECT user_id FROM public.get_nearby_drivers_v2('00000000-0000-0000-0000-00000000000a', 5000) $$,
+  $$ VALUES ('00000000-0000-0000-0000-00000000000b'::uuid) $$,
+  'the resumed driver is visible again');
+
+-- dan's session is still status=active (cleanup already ran, so simulate a
+-- late cron by resetting erin-style state only for dan): heartbeat decides.
+UPDATE public.live_sessions SET status = 'active', ended_at = NULL, ended_reason = NULL,
+       expires_at = now() - INTERVAL '40 seconds'
+WHERE user_id = '00000000-0000-0000-0000-00000000000d'
+  AND id = (SELECT id FROM public.live_sessions WHERE user_id = '00000000-0000-0000-0000-00000000000d' ORDER BY started_at DESC LIMIT 1);
+INSERT INTO public.location_presence (user_id, session_id, location, expires_at)
+SELECT user_id, id, extensions.ST_SetSRID(extensions.ST_MakePoint(-122.0, 37.009), 4326)::extensions.geography,
+       now() - INTERVAL '40 seconds'
+FROM public.live_sessions WHERE user_id = '00000000-0000-0000-0000-00000000000d' AND status = 'active'
+ON CONFLICT (user_id) DO NOTHING;
+
+SELECT is(pg_temp.hb('00000000-0000-0000-0000-00000000000d', 37.009, -122.0), NULL,
+  'a heartbeat past the grace cannot revive the session, even before cron runs');
+SELECT is((SELECT status::text FROM public.live_sessions WHERE user_id = '00000000-0000-0000-0000-00000000000d' ORDER BY started_at DESC LIMIT 1),
+  'expired', 'the late heartbeat ends the session as expired');
+SELECT is_empty($$ SELECT 1 FROM public.location_presence WHERE user_id = '00000000-0000-0000-0000-00000000000d' $$,
+  'and removes its presence');
+
+
 SELECT isnt(pg_temp.hb('00000000-0000-0000-0000-00000000000a', 37.0018, -122.0), NULL, 'heartbeat returns new expiry');
 SELECT ok(pg_temp.dist_from('00000000-0000-0000-0000-00000000000a', 37.0018, -122.0) < 1,
   '200 m move within GPS/speed envelope is accepted');
@@ -279,6 +331,42 @@ SELECT is(
   NULL,
   'heartbeat without an active session returns NULL'
 );
+
+
+-- ── 8. Default privileges for future functions ──────────────────────────────
+-- Runs as the migration role, like a future migration would.
+
+CREATE FUNCTION public.rp_future_definer() RETURNS int
+LANGUAGE sql SECURITY DEFINER SET search_path = '' AS 'SELECT 1';
+CREATE FUNCTION extensions.rp_future_ext() RETURNS int
+LANGUAGE sql AS 'SELECT 1';
+
+SELECT ok(
+  NOT has_function_privilege('anon', 'public.rp_future_definer()', 'EXECUTE')
+  AND NOT has_function_privilege('authenticated', 'public.rp_future_definer()', 'EXECUTE'),
+  'a new SECURITY DEFINER function in public is not client-executable without any REVOKE');
+SELECT ok(has_function_privilege('service_role', 'public.rp_future_definer()', 'EXECUTE'),
+  'service_role still gets new public functions (Edge Function helpers)');
+SELECT ok(
+  has_function_privilege('anon', 'extensions.rp_future_ext()', 'EXECUTE')
+  AND has_function_privilege('authenticated', 'extensions.st_dwithin(extensions.geography, extensions.geography, double precision, boolean)', 'EXECUTE'),
+  'extension functions (new and existing) stay executable');
+
+
+-- ── 9. search_path hardening ─────────────────────────────────────────────────
+
+SELECT is_empty(
+  $$ SELECT p.oid::regprocedure::text FROM pg_proc p
+     WHERE p.oid::regprocedure::text IN (
+       'private.is_room_member(uuid)', 'private.is_room_owner(uuid)',
+       'private.can_view_open_voice(uuid)', 'private.live_session_grace()',
+       'upsert_location_presence(uuid,uuid,double precision,double precision)',
+       'update_location_heartbeat(uuid,uuid,double precision,double precision)',
+       'get_nearby_drivers_v2(uuid,integer)',
+       'consume_rate_limit(uuid,text,integer,integer)',
+       'expire_stale_sessions()')
+       AND NOT (p.proconfig @> ARRAY['search_path=""']) $$,
+  'every function created or replaced by migration 010 pins an empty search_path');
 
 SELECT * FROM finish();
 ROLLBACK;
