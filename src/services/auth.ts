@@ -13,6 +13,7 @@ import type { EmailOtpType } from '@supabase/supabase-js';
 
 import { supabase } from './supabase';
 import { destroyEngine as destroyAgoraEngine } from './agoraVoice';
+import { liveController } from './live/liveController';
 
 // ─── Email verification redirect ───────────────────────────────────────────────
 
@@ -243,8 +244,15 @@ export function friendlyAppleError(err: unknown): string {
 // ─── Sign out ─────────────────────────────────────────────────────────────────
 
 export async function signOut() {
-  // Tear down any live Agora audio engine before clearing the session so no
-  // channel membership outlives the logout. Best-effort; never blocks sign-out.
+  // End live first, while the session can still authenticate: stops the
+  // server session (reason "logout"), removes this user's PushToTalk tokens,
+  // leaves the PushToTalk channel and ends the Live Activity.
+  try {
+    await liveController.onLogout();
+  } catch {
+    // never blocks sign-out; the server expires the session anyway
+  }
+  // Tear down the Agora engine so no channel membership outlives the logout.
   try {
     await destroyAgoraEngine();
   } catch {

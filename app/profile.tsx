@@ -41,7 +41,6 @@ import {
   friendlyAvatarError,
   type AvatarSource,
 } from '@/services/avatar';
-import { stopLiveSession } from '@/services/liveSession';
 import { makeStyles, useTheme } from '@/theme/ThemeProvider';
 import { SCREEN_INSET, Spacing } from '@/theme/spacing';
 
@@ -210,7 +209,6 @@ export default function ProfileScreen() {
         style: 'destructive',
         onPress: () => {
           void (async () => {
-            try { await stopLiveSession(); } catch {}
             await signOut();
             router.replace('/onboarding');
           })();

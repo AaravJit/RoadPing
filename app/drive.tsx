@@ -21,12 +21,16 @@
  *    on the map: the server gives only a distance band (Nearby sheet,
  *    header count, speaker capsule), no position or direction.
  *  - Voice is hold-to-talk only; nothing is recorded.
- *  - Leaving the app ends the session (useAppLifecycleCleanup → stopSilent).
+ *  - Live runs until the driver ends it (Phase 3): it keeps going in the
+ *    background with When In Use location and PushToTalk, and a cold launch
+ *    never resumes it (liveController). Keep-awake only while this screen is
+ *    focused and live.
  *  - Ending the session always asks first, so it can't happen by accident.
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { ActionSheetIOS, Alert, Linking, Platform, StyleSheet, View } from 'react-native';
-import { Redirect, useRouter } from 'expo-router';
+import { Redirect, useFocusEffect, useRouter } from 'expo-router';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LoadingState } from '@/components/LoadingState';
@@ -40,7 +44,6 @@ import { SpeakerCapsule } from '@/components/drive/SpeakerCapsule';
 import { VoiceDock, type VoiceDockNotice } from '@/components/drive/VoiceDock';
 import { personName } from '@/components/identity';
 import { AppText, GlassIconButton, Sheet, haptic } from '@/components/ui';
-import { useAppLifecycleCleanup } from '@/hooks/useAppLifecycleCleanup';
 import { useAuth } from '@/hooks/useAuth';
 import { useHoldToTalk } from '@/hooks/useHoldToTalk';
 import { useLiveSession } from '@/hooks/useLiveSession';
@@ -58,6 +61,7 @@ import {
 } from '@/services/location';
 import { blockUser } from '@/services/moderation';
 import { updateProfile } from '@/services/profile';
+import { voiceController, type VoiceIssue } from '@/services/voice/voiceController';
 import type { NearbyDriverCard } from '@/services/types';
 import { DEFAULT_RANGE_M, broadcastRangeFor } from '@/services/units';
 import { bodyTypeEmoji, bodyTypeSqlToUi } from '@/services/vehicle';
@@ -89,6 +93,8 @@ export default function DriveScreen() {
   const toLiveRange = (m: number) => broadcastRangeFor(m) ?? m;
   const live = useLiveSession({
     initialRangeM: toLiveRange(profile?.default_range_m ?? DEFAULT_RANGE_M),
+    userId: user?.id ?? null,
+    dnd: profile?.dnd_mode ?? false,
   });
 
   // Sync rangeM once with the profile default (fires only once after load).
@@ -108,10 +114,22 @@ export default function DriveScreen() {
     liveSessionId: live.sessionId,
   });
 
-  useAppLifecycleCleanup({
-    enabled: isLive,
-    cleanup: () => live.stopSilent(),
-  });
+  // Names for the system PushToTalk UI when a nearby driver talks.
+  useEffect(() => {
+    const byId = new Map(nearby.drivers.map((d) => [d.user_id, personName(d)]));
+    voiceController.setNameResolver((id) => byId.get(id) ?? null);
+  }, [nearby.drivers]);
+
+  // Keep the screen awake only while Drive is focused and live.
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!isLive) return undefined;
+      void activateKeepAwakeAsync('roadping-drive').catch(() => {});
+      return () => {
+        void deactivateKeepAwake('roadping-drive').catch(() => {});
+      };
+    }, [isLive]),
+  );
 
   // ── Local UI state ─────────────────────────────────────────────────────────
   const [nearbyOpen, setNearbyOpen] = useState(false);
@@ -229,15 +247,14 @@ export default function DriveScreen() {
           cancelButtonIndex: 2,
         },
         (index) => {
-          if (index === 0) void live.stop();
-          if (index === 1) void live.stopSilent();
+          if (index === 0 || index === 1) void live.stop();
         },
       );
       return;
     }
     Alert.alert('End live session?', message, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Stop & Hide Now', style: 'destructive', onPress: () => void live.stopSilent() },
+      { text: 'Stop & Hide Now', style: 'destructive', onPress: () => void live.stop() },
       { text: 'Stop Going Live', onPress: () => void live.stop() },
     ]);
   }
@@ -311,7 +328,8 @@ export default function DriveScreen() {
   // ── Derived display values ─────────────────────────────────────────────────
   const rangeIsSet = broadcastRangeFor(live.rangeM) !== null;
   const rangeLabel = rangeIsSet ? formatRange(live.rangeM) : 'Set range';
-  const speaking = nearby.drivers.filter((d) => d.is_speaking && !d.dnd);
+  // DND means "no incoming voice", not hidden: a DND driver can still talk.
+  const speaking = nearby.drivers.filter((d) => d.is_speaking);
   const speaker = isLive ? (speaking[0] ?? null) : null;
   const primaryBodyUi =
     primary?.body_type != null ? bodyTypeSqlToUi(primary.body_type) : null;
@@ -336,7 +354,7 @@ export default function DriveScreen() {
       key: 'location',
       tone: 'info',
       title: permStatus === 'denied' ? 'Location is off for RoadPing' : 'Location needed to go live',
-      message: 'See and be seen by nearby live drivers while RoadPing is active.',
+      message: 'See and be seen by nearby live drivers while you are live.',
       actionLabel: permStatus === 'denied' ? 'Open Settings' : 'Allow Location',
       onPress: () => void handleRequestLocation(),
     });
@@ -354,6 +372,56 @@ export default function DriveScreen() {
   if (!isLive && live.error !== null && !live.hiddenInZone) {
     notices.push({ key: 'error', tone: 'danger', title: "Couldn't go live", message: live.error });
   }
+  if (!isLive && live.endNotice !== null && live.endNotice !== 'private_zone') {
+    const END_TEXT: Record<Exclude<typeof live.endNotice, null | 'private_zone'>, { title: string; message: string }> = {
+      ended_at_launch: {
+        title: 'Your live session ended',
+        message: 'RoadPing was closed while you were live. Go live again when you want to be seen.',
+      },
+      expired: {
+        title: 'Your live session ended',
+        message: 'RoadPing lost its connection for too long. Go live again when you have signal.',
+      },
+      location_off: {
+        title: 'Location was turned off',
+        message: 'Your live session ended because RoadPing can no longer use your location.',
+      },
+      ptt_left: {
+        title: 'You left the voice channel',
+        message: 'Leaving from the Lock Screen ends your live session.',
+      },
+    };
+    const t = END_TEXT[live.endNotice];
+    notices.push({ key: 'ended', tone: 'info', title: t.title, message: t.message, actionLabel: 'OK', onPress: live.clearNotices });
+  }
+  if (isLive && live.reconnecting) {
+    notices.push({
+      key: 'reconnecting',
+      tone: 'warning',
+      title: 'Reconnecting',
+      message: "Nearby drivers may not see you until RoadPing is back online.",
+    });
+  }
+  const issue: VoiceIssue | null = isLive ? ptt.voice.issue : null;
+  const ISSUE_TEXT: Partial<Record<VoiceIssue, { title: string; message: string }>> = {
+    voice_unavailable: { title: 'Voice is off right now', message: 'You can still go live and see nearby drivers.' },
+    background_voice_off: { title: 'Voice paused', message: 'On this iPhone, voice works only while RoadPing is open.' },
+    ptt_unavailable: { title: 'Voice works only with RoadPing open', message: "iOS push to talk isn't available, so voice pauses in the background." },
+    network: { title: "Couldn't connect voice", message: 'Check your signal and try again.' },
+    busy_receiving: { title: 'Someone is talking', message: 'Wait for them to finish, then hold to talk.' },
+    mic_failed: { title: "Microphone couldn't start", message: 'Another app may be using it. Try again.' },
+  };
+  if (issue !== null && ISSUE_TEXT[issue] !== undefined) {
+    const t = ISSUE_TEXT[issue]!;
+    notices.push({
+      key: `voice-${issue}`,
+      tone: issue === 'busy_receiving' ? 'info' : 'warning',
+      title: t.title,
+      message: t.message,
+      actionLabel: 'OK',
+      onPress: () => voiceController.clearIssue(),
+    });
+  }
   if (isLive && ptt.micPermissionDenied) {
     notices.push({
       key: 'mic',
@@ -364,6 +432,18 @@ export default function DriveScreen() {
       onPress: () => void Linking.openSettings(),
     });
   }
+
+  const listeningTo = ptt.voice.incoming[0] ?? null;
+  const voiceFooter =
+    ptt.state === 'receiving'
+      ? `Listening to ${listeningTo?.speakerName ?? 'a nearby driver'}`
+      : profile?.dnd_mode
+        ? 'Nearby · Do Not Disturb: incoming voice paused'
+        : !ptt.voiceConnected
+          ? 'Nearby · drivers see when you talk'
+          : ptt.backgroundVoice
+            ? 'Nearby · voice on, also from the Lock Screen'
+            : 'Nearby · voice on while RoadPing is open';
 
   const headerTop = insets.top + Spacing.xs;
   const controlsTop = headerTop + DRIVE_TOUCH_TARGET + Spacing.md12;
@@ -388,6 +468,7 @@ export default function DriveScreen() {
       <View pointerEvents="box-none" style={[styles.header, { top: headerTop }]}>
         <DriveHeader
           status={status}
+          reconnecting={isLive && live.reconnecting}
           nearbyCount={nearby.drivers.length}
           profileName={profile?.display_name ?? profile?.handle ?? null}
           avatarUri={profile?.avatar_url ?? null}
@@ -447,7 +528,7 @@ export default function DriveScreen() {
                 disabled: ptt.isDisabled,
                 onPressIn: ptt.onPressIn,
                 onPressOut: ptt.onPressOut,
-                audioConnected: ptt.voiceConnected,
+                footer: voiceFooter,
               }}
             />
           ) : (

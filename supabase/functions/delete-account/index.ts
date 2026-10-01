@@ -66,6 +66,10 @@ Deno.serve(async (req: Request) => {
     //  explicitly so a transient cascade failure can't leave residue behind.)
     await admin.from('location_presence').delete().eq('user_id', userId);
     await admin.from('push_tokens').delete().eq('user_id', userId);
+    // PTT tokens and open transmissions also cascade with the profile; explicit
+    // so a device stops being woken even if the auth delete below fails.
+    await admin.rpc('unregister_ptt_token', { p_user_id: userId, p_installation_id: null });
+    await admin.rpc('voice_end_transmission', { p_user_id: userId, p_transmission_id: null, p_reason: 'aborted' });
     await admin.from('blocks').delete().eq('blocker_id', userId);
     await admin.from('room_members').delete().eq('user_id', userId);
 

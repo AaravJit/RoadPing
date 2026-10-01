@@ -1,57 +1,42 @@
 /**
- * agoraVoice — thin wrapper around the Agora RTC engine for RoadPing's
- * live-only push-to-talk audio transport.
+ * agoraVoice — the Agora RTC engine as RoadPing's audio transport.
  *
- * ┌─────────────────────────────────────────────────────────────────────────┐
- * │  WHERE THIS RUNS                                                          │
- * │                                                                          │
- * │  Agora is a NATIVE module (react-native-agora). It does NOT work in      │
- * │  Expo Go. It requires an EAS development build / TestFlight build.       │
- * │  In Expo Go, isAgoraAvailable() returns false and every call is a no-op  │
- * │  — the app falls back to speaking-indicator-only behavior (voice.ts).    │
- * ├─────────────────────────────────────────────────────────────────────────┤
- * │  PRIVACY                                                                 │
- * │                                                                          │
- * │  Audio is live transport only. We never start a recording, never write  │
- * │  a file, never upload a clip, never transcribe. PTT = unmute the mic     │
- * │  while held; release = mute. Leaving the channel ends transport.         │
- * └─────────────────────────────────────────────────────────────────────────┘
+ * Phase 3 topology (docs/PHASE3_VOICE_PTT.md): every press is its own
+ * opaque channel ("rpt_<random>") that the server created. The speaker joins
+ * it as the only publisher; each authorized listener joins it as an audience
+ * member with a token the server minted for that listener alone. There is no
+ * shared Nearby or room channel and no client-side filtering of who to hear.
+ * One engine holds several connections (joinChannelEx) so a driver can hear
+ * a few people at once.
+ *
+ * Tokens live at most 45 s. Before one expires the engine reports it and
+ * voiceController asks the server again; if the server refuses, the
+ * connection is left (fail closed). Agora's own token-expiry and banned
+ * states also end the connection.
+ *
+ * Audio session:
+ *  • 'ptt' mode: Apple's PushToTalk framework owns and activates the audio
+ *    session. Agora is told not to touch it at all
+ *    (AudioSessionOperationRestrictionAll).
+ *  • 'direct' mode (foreground, no PushToTalk): Agora manages it with the
+ *    loudspeaker as the DEFAULT route only, so Bluetooth, CarPlay and wired
+ *    headsets still take over when connected. setEnableSpeakerphone(true),
+ *    which forced the built-in speaker, is no longer used.
+ *
+ * Where it runs: a native module, so not in Expo Go; and never touched when
+ * the kill switch EXPO_PUBLIC_DISABLE_AGORA is "true".
+ *
+ * Privacy: live transport only. Nothing is recorded, stored or transcribed.
  */
-import type {
-  IRtcEngine,
-  IRtcEngineEventHandler,
-  RtcConnection,
-  AudioVolumeInfo,
-} from 'react-native-agora';
+import type { IRtcEngineEx, IRtcEngineEventHandler, RtcConnection } from 'react-native-agora';
 import { IS_EXPO_GO, DISABLE_AGORA } from './env';
 
-// ─── Public types ───────────────────────────────────────────────────────────
-
-export interface AgoraJoinParams {
-  appId: string;
-  channelName: string;
-  token: string;
-  uid: number;
-}
-
-/** Fired with the set of remote uids currently speaking (volume over threshold). */
-export type RemoteSpeakingListener = (speakingUids: number[]) => void;
-
-/** Fired on a fatal Agora error code so the UI can recover/notify. */
-export type AgoraErrorListener = (code: number) => void;
-
-// ─── Native module loader (lazy + Expo-Go-safe) ───────────────────────────────
-
-// We require() the native module lazily so merely importing this file never
-// touches native code in Expo Go. The types above are erased at build time.
 type AgoraModule = typeof import('react-native-agora');
 let _mod: AgoraModule | null = null;
 let _disabledLogged = false;
 
 function loadAgora(): AgoraModule | null {
-  // Kill switch: never touch the native module when explicitly disabled.
-  // This guarantees no require('react-native-agora') and no
-  // createAgoraRtcEngine() can ever run in a diagnostic build.
+  // Kill switch: never require the native module when explicitly disabled.
   if (DISABLE_AGORA) {
     if (!_disabledLogged) {
       _disabledLogged = true;
@@ -71,192 +56,301 @@ function loadAgora(): AgoraModule | null {
   }
 }
 
-/** True only when the native Agora SDK can actually run (EAS/dev build, not Expo Go). */
+/** True only when the native Agora SDK can run (EAS build, kill switch off). */
 export function isAgoraAvailable(): boolean {
   return loadAgora() !== null;
 }
 
-// ─── uid mapping ──────────────────────────────────────────────────────────────
+// ─── Public types ────────────────────────────────────────────────────────────
 
-/**
- * Deterministic 32-bit Agora uid for a Supabase user id.
- *
- * MUST stay byte-for-byte identical to agoraUid() in
- * supabase/functions/create-agora-token/index.ts so the client can map remote
- * audio (which carries the Agora uid) back to a known member.
- */
-export function agoraUidForUser(userId: string): number {
-  let hash = 0x811c9dc5; // FNV offset basis
-  for (let i = 0; i < userId.length; i++) {
-    hash ^= userId.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193); // FNV prime
-  }
-  return (hash >>> 1 || 1) >>> 0;
+export type AudioMode = 'ptt' | 'direct';
+
+export type ConnectionRole = 'speaker' | 'listener';
+
+export type AgoraConnectionEvent =
+  /** Speaker: joined and publishing the microphone. */
+  | { type: 'published'; channel: string }
+  /** Listener: the speaker's audio is playing. */
+  | { type: 'audio_started'; channel: string }
+  /** The token for this connection expires in about 30 s. */
+  | { type: 'token_will_expire'; channel: string }
+  /** The speaker left the channel (listener side). */
+  | { type: 'speaker_left'; channel: string }
+  /** The connection can no longer carry audio; it has been left. */
+  | { type: 'failed'; channel: string; reason: 'token_expired' | 'invalid_token' | 'banned' | 'rejected' | 'join_failed' | 'mic_failed' };
+
+export type AgoraEventListener = (e: AgoraConnectionEvent) => void;
+
+interface Connection {
+  channel: string;
+  uid: number;
+  role: ConnectionRole;
+  /** Listener only: the one uid this connection may play. */
+  speakerUid: number | null;
 }
 
-// ─── Engine state ─────────────────────────────────────────────────────────────
+// ─── Engine state ────────────────────────────────────────────────────────────
 
-let _engine: IRtcEngine | null = null;
+let _engine: IRtcEngineEx | null = null;
 let _handler: IRtcEngineEventHandler | null = null;
-let _channel: string | null = null;
-let _micMuted = true;
+let _appId: string | null = null;
+let _mode: AudioMode = 'direct';
+const _connections = new Map<string, Connection>();
+const _listeners = new Set<AgoraEventListener>();
 
-let _remoteSpeakingListener: RemoteSpeakingListener | null = null;
-let _errorListener: AgoraErrorListener | null = null;
+function emit(e: AgoraConnectionEvent) {
+  for (const l of _listeners) {
+    try {
+      l(e);
+    } catch {
+      // A listener error must not break the engine callbacks.
+    }
+  }
+}
 
-/** Volume (0–255) above which a participant counts as "speaking". */
-const SPEAKING_VOLUME_THRESHOLD = 5;
+function rtc(c: Connection): RtcConnection {
+  return { channelId: c.channel, localUid: c.uid };
+}
 
-function ensureEngine(appId: string): IRtcEngine | null {
+function failAndLeave(channel: string, reason: Extract<AgoraConnectionEvent, { type: 'failed' }>['reason']) {
+  const c = _connections.get(channel);
+  if (!c) return;
+  _connections.delete(channel);
+  try {
+    _engine?.leaveChannelEx(rtc(c));
+  } catch {
+    // already gone
+  }
+  emit({ type: 'failed', channel, reason });
+}
+
+function applyMode(engine: IRtcEngineEx, mod: AgoraModule) {
+  if (_mode === 'ptt') {
+    engine.setAudioSessionOperationRestriction(
+      mod.AudioSessionOperationRestriction.AudioSessionOperationRestrictionAll,
+    );
+  } else {
+    engine.setAudioSessionOperationRestriction(
+      mod.AudioSessionOperationRestriction.AudioSessionOperationRestrictionNone,
+    );
+    // Default route only: a connected Bluetooth / CarPlay / wired route wins.
+    engine.setDefaultAudioRouteToSpeakerphone(true);
+  }
+}
+
+function ensureEngine(appId: string): IRtcEngineEx | null {
   const mod = loadAgora();
   if (!mod) return null;
-  if (_engine) return _engine;
+  if (_engine && _appId === appId) return _engine;
+  if (_engine) destroyEngineSync();
 
-  const { createAgoraRtcEngine, ChannelProfileType } = mod;
-  const engine = createAgoraRtcEngine();
+  const engine = mod.createAgoraRtcEngine() as IRtcEngineEx;
   engine.initialize({
     appId,
-    // Live broadcast profile is Agora's recommended choice for PTT.
-    channelProfile: ChannelProfileType.ChannelProfileLiveBroadcasting,
+    channelProfile: mod.ChannelProfileType.ChannelProfileLiveBroadcasting,
+    audioScenario: mod.AudioScenarioType.AudioScenarioChatroom,
   });
   engine.enableAudio();
-  // Report speaker volumes every 300 ms so we can drive speaking indicators.
-  engine.enableAudioVolumeIndication(300, 3, false);
-  // Route audio to the loudspeaker (hands-free while driving), not the earpiece.
-  engine.setEnableSpeakerphone(true);
+  engine.disableVideo();
+  applyMode(engine, mod);
 
+  const S = mod.ConnectionStateType;
+  const R = mod.ConnectionChangedReasonType;
   _handler = {
-    onError: (errCode: number) => {
-      _errorListener?.(errCode);
+    onJoinChannelSuccess: (conn: RtcConnection) => {
+      const c = conn.channelId ? _connections.get(conn.channelId) : undefined;
+      if (c?.role === 'speaker') emit({ type: 'published', channel: c.channel });
     },
-    onAudioVolumeIndication: (
-      _conn: RtcConnection,
-      speakers: AudioVolumeInfo[],
-    ) => {
-      if (!_remoteSpeakingListener) return;
-      // uid === 0 is the local user in this report; ignore it here.
-      const remote = speakers
-        .filter((s) => (s.uid ?? 0) !== 0 && (s.volume ?? 0) >= SPEAKING_VOLUME_THRESHOLD)
-        .map((s) => s.uid as number);
-      _remoteSpeakingListener(remote);
+    onRemoteAudioStateChanged: (conn: RtcConnection, remoteUid: number, state: number) => {
+      const c = conn.channelId ? _connections.get(conn.channelId) : undefined;
+      if (c?.role !== 'listener' || remoteUid !== c.speakerUid) return;
+      if (state === mod.RemoteAudioState.RemoteAudioStateDecoding) {
+        emit({ type: 'audio_started', channel: c.channel });
+      }
+    },
+    onUserOffline: (conn: RtcConnection, remoteUid: number) => {
+      const c = conn.channelId ? _connections.get(conn.channelId) : undefined;
+      if (c?.role === 'listener' && remoteUid === c.speakerUid) {
+        emit({ type: 'speaker_left', channel: c.channel });
+      }
+    },
+    onTokenPrivilegeWillExpire: (conn: RtcConnection) => {
+      if (conn.channelId && _connections.has(conn.channelId)) {
+        emit({ type: 'token_will_expire', channel: conn.channelId });
+      }
+    },
+    onRequestToken: (conn: RtcConnection) => {
+      if (conn.channelId) failAndLeave(conn.channelId, 'token_expired');
+    },
+    onLocalAudioStateChanged: (conn: RtcConnection, state: number) => {
+      if (state !== mod.LocalAudioStreamState.LocalAudioStreamStateFailed) return;
+      for (const c of _connections.values()) {
+        if (c.role === 'speaker' && (!conn.channelId || conn.channelId === c.channel)) {
+          failAndLeave(c.channel, 'mic_failed');
+        }
+      }
+    },
+    onConnectionStateChanged: (conn: RtcConnection, state: number, reason: number) => {
+      if (!conn.channelId) return;
+      if (state !== S.ConnectionStateFailed && state !== S.ConnectionStateDisconnected) return;
+      const why =
+        reason === R.ConnectionChangedTokenExpired
+          ? 'token_expired'
+          : reason === R.ConnectionChangedInvalidToken
+            ? 'invalid_token'
+            : reason === R.ConnectionChangedBannedByServer
+              ? 'banned'
+              : reason === R.ConnectionChangedRejectedByServer
+                ? 'rejected'
+                : reason === R.ConnectionChangedJoinFailed
+                  ? 'join_failed'
+                  : null;
+      if (why) failAndLeave(conn.channelId, why);
     },
   };
   engine.registerEventHandler(_handler);
-
   _engine = engine;
-  return _engine;
+  _appId = appId;
+  return engine;
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────────
+// ─── Public API ──────────────────────────────────────────────────────────────
+
+/** Subscribes to connection events. Returns an unsubscribe function. */
+export function onAgoraEvent(listener: AgoraEventListener): () => void {
+  _listeners.add(listener);
+  return () => {
+    _listeners.delete(listener);
+  };
+}
 
 /**
- * Joins (or re-joins) the given channel. The mic always starts MUTED — joining
- * is for receiving; the caller unmutes via setMicMuted(false) on PTT press.
- *
- * No-op (resolves) when Agora is unavailable (Expo Go).
+ * Who owns the audio session. Switch only while no connection is open
+ * (voiceController switches when the app changes foreground state between
+ * presses).
  */
-export async function joinChannel(params: AgoraJoinParams): Promise<void> {
-  const engine = ensureEngine(params.appId);
-  if (!engine) return; // Expo Go fallback — speaking indicators still work.
+export function setAudioMode(mode: AudioMode): void {
+  _mode = mode;
+  const mod = loadAgora();
+  if (_engine && mod) applyMode(_engine, mod);
+}
 
-  const mod = loadAgora()!;
-  const { ClientRoleType, ChannelProfileType } = mod;
+export function audioMode(): AudioMode {
+  return _mode;
+}
 
-  // If already in a different channel, leave it first.
-  if (_channel !== null && _channel !== params.channelName) {
-    engine.leaveChannel();
-  }
-
-  _micMuted = true;
-  engine.setClientRole(ClientRoleType.ClientRoleBroadcaster);
-  engine.joinChannel(params.token, params.channelName, params.uid, {
-    channelProfile: ChannelProfileType.ChannelProfileLiveBroadcasting,
-    clientRoleType: ClientRoleType.ClientRoleBroadcaster,
-    // Subscribe to everyone's audio (receive), but do NOT publish the mic until
-    // the user holds PTT.
-    autoSubscribeAudio: true,
-    publishMicrophoneTrack: false,
+/** Speaker: join the press's channel and publish the microphone. */
+export function publish(args: { appId: string; channel: string; uid: number; token: string }): boolean {
+  const engine = ensureEngine(args.appId);
+  const mod = loadAgora();
+  if (!engine || !mod) return false;
+  if (_connections.has(args.channel)) return true;
+  const c: Connection = { channel: args.channel, uid: args.uid, role: 'speaker', speakerUid: null };
+  _connections.set(args.channel, c);
+  const rc = engine.joinChannelEx(args.token, rtc(c), {
+    channelProfile: mod.ChannelProfileType.ChannelProfileLiveBroadcasting,
+    clientRoleType: mod.ClientRoleType.ClientRoleBroadcaster,
+    publishMicrophoneTrack: true,
+    publishCameraTrack: false,
+    autoSubscribeAudio: false,
+    autoSubscribeVideo: false,
   });
-  // Belt-and-braces: ensure the mic stream is muted right after joining.
-  engine.muteLocalAudioStream(true);
-  _channel = params.channelName;
-}
-
-/** Leaves the current channel (stops all transport). Safe to call when not joined. */
-export async function leaveChannel(): Promise<void> {
-  const engine = _engine;
-  if (!engine || _channel === null) {
-    _channel = null;
-    return;
+  if (rc < 0) {
+    _connections.delete(args.channel);
+    return false;
   }
-  engine.muteLocalAudioStream(true);
-  engine.leaveChannel();
-  _channel = null;
-  _micMuted = true;
+  return true;
 }
 
 /**
- * PTT: false = transmitting (publish mic), true = silent.
- * No-op when Agora is unavailable or not joined.
+ * Listener: join a press's channel as audience and play only the speaker's
+ * uid. The server already decided this listener may hear this press.
  */
-export async function setMicMuted(muted: boolean): Promise<void> {
+export function listen(args: {
+  appId: string;
+  channel: string;
+  uid: number;
+  token: string;
+  speakerUid: number;
+  muted: boolean;
+}): boolean {
+  const engine = ensureEngine(args.appId);
+  const mod = loadAgora();
+  if (!engine || !mod) return false;
+  if (_connections.has(args.channel)) return true;
+  const c: Connection = { channel: args.channel, uid: args.uid, role: 'listener', speakerUid: args.speakerUid };
+  _connections.set(args.channel, c);
+  const rc = engine.joinChannelEx(args.token, rtc(c), {
+    channelProfile: mod.ChannelProfileType.ChannelProfileLiveBroadcasting,
+    clientRoleType: mod.ClientRoleType.ClientRoleAudience,
+    publishMicrophoneTrack: false,
+    publishCameraTrack: false,
+    autoSubscribeAudio: true,
+    autoSubscribeVideo: false,
+  });
+  if (rc < 0) {
+    _connections.delete(args.channel);
+    return false;
+  }
+  engine.setSubscribeAudioAllowlistEx([args.speakerUid], 1, rtc(c));
+  if (args.muted) engine.muteAllRemoteAudioStreamsEx(true, rtc(c));
+  return true;
+}
+
+/** Hands a freshly server-minted token to an open connection. */
+export function renewToken(channel: string, token: string): boolean {
+  const c = _connections.get(channel);
+  if (!c || !_engine) return false;
+  return _engine.updateChannelMediaOptionsEx({ token }, rtc(c)) >= 0;
+}
+
+/** Leaves one connection. Safe for unknown channels. */
+export function leave(channel: string): void {
+  const c = _connections.get(channel);
+  if (!c) return;
+  _connections.delete(channel);
+  try {
+    _engine?.leaveChannelEx(rtc(c));
+  } catch {
+    // already gone
+  }
+}
+
+/** Leaves every connection (go offline, mode switch, logout). */
+export function leaveAll(): void {
+  for (const ch of [..._connections.keys()]) leave(ch);
+}
+
+/** Mutes playback on every listener connection (used for Do Not Disturb). */
+export function setPlaybackMuted(muted: boolean): void {
+  if (!_engine) return;
+  for (const c of _connections.values()) {
+    if (c.role === 'listener') _engine.muteAllRemoteAudioStreamsEx(muted, rtc(c));
+  }
+}
+
+export function openChannels(): string[] {
+  return [..._connections.keys()];
+}
+
+function destroyEngineSync() {
   const engine = _engine;
-  if (!engine || _channel === null) return;
-  if (_micMuted === muted) return;
-  _micMuted = muted;
-  engine.muteLocalAudioStream(muted);
-}
-
-/**
- * DND: mute/unmute ALL incoming audio playback locally.
- * Used to suppress incoming voice when Do Not Disturb is on.
- */
-export async function setRemoteMuted(muted: boolean): Promise<void> {
-  const engine = _engine;
-  if (!engine) return;
-  engine.muteAllRemoteAudioStreams(muted);
-}
-
-/** Register a listener for remote speaking changes. Returns an unsubscribe fn. */
-export function setRemoteSpeakingListener(
-  listener: RemoteSpeakingListener | null,
-): () => void {
-  _remoteSpeakingListener = listener;
-  return () => {
-    if (_remoteSpeakingListener === listener) _remoteSpeakingListener = null;
-  };
-}
-
-/** Register a listener for fatal Agora error codes. Returns an unsubscribe fn. */
-export function setErrorListener(listener: AgoraErrorListener | null): () => void {
-  _errorListener = listener;
-  return () => {
-    if (_errorListener === listener) _errorListener = null;
-  };
-}
-
-/** The channel currently joined, or null. */
-export function currentChannel(): string | null {
-  return _channel;
-}
-
-/**
- * Fully tears down the engine. Call on logout / app teardown.
- * After this, the next joinChannel() re-initializes from scratch.
- */
-export async function destroyEngine(): Promise<void> {
-  const engine = _engine;
+  _engine = null;
+  _appId = null;
+  _connections.clear();
   if (!engine) return;
   try {
-    if (_channel !== null) engine.leaveChannel();
+    engine.leaveChannel();
     if (_handler) engine.unregisterEventHandler(_handler);
     engine.release();
+  } catch {
+    // ignore
   } finally {
-    _engine = null;
     _handler = null;
-    _channel = null;
-    _micMuted = true;
-    _remoteSpeakingListener = null;
-    _errorListener = null;
   }
+}
+
+/** Fully tears down the engine (logout). The next call re-initializes. */
+export async function destroyEngine(): Promise<void> {
+  destroyEngineSync();
 }

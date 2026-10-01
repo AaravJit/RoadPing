@@ -34,6 +34,8 @@ const LABEL: Record<HoldState, string> = {
   arming: 'Connecting',
   speaking: 'Talking',
   releasing: 'Ending',
+  receiving: 'Listening',
+  unavailable: 'Voice Off',
 };
 
 export function HoldToTalkButton({
@@ -50,7 +52,9 @@ export function HoldToTalkButton({
   const ring = useRef(new Animated.Value(0)).current;
 
   const speaking = state === 'speaking';
-  const engaged = state !== 'idle';
+  const engaged = state === 'arming' || state === 'speaking' || state === 'releasing';
+  // Voice off for now (server not configured, no longer a room member).
+  disabled = disabled || state === 'unavailable';
 
   // Press-in is functional feedback — kept under Reduce Motion, just faster.
   useEffect(() => {

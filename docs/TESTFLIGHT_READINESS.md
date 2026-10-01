@@ -41,17 +41,24 @@ Cross-references:
 - [ ] `EXPO_PUBLIC_SCREENSHOT_MODE` is **NOT set** (or `false`) in the
       submitted build.
 
-## 3. iOS permissions
+## 3. iOS permissions and capabilities (Phase 3)
 
-- [ ] `NSLocationWhenInUseUsageDescription` reads: "RoadPing uses your
-      location while active to show nearby live drivers and let them see
-      you're nearby after you tap Go Live. Your exact coordinates are never
-      shared and no location history is stored."
-- [ ] `NSMicrophoneUsageDescription` reads: "RoadPing uses your microphone
-      when you hold to talk to nearby drivers or room members. Voice is
-      live only and not recorded or stored."
-- [ ] No `NSLocationAlwaysAndWhenInUseUsageDescription`.
-- [ ] No background modes declared.
+Check the built app's Info.plist / entitlements (see docs/PHASE3_VOICE_PTT.md
+→ Native capabilities):
+
+- [ ] `NSLocationWhenInUseUsageDescription` matches app.json (mentions use in
+      the background while live).
+- [ ] `NSLocationAlways*` strings exist only because expo-location always
+      writes them; they say RoadPing never needs Always. The app never
+      requests Always (scripts/client-test/phase3Native.test.mjs).
+- [ ] `NSMicrophoneUsageDescription` matches app.json.
+- [ ] `UIBackgroundModes`: `location` in every build; `push-to-talk` only in
+      voice builds. Never `audio` or `voip`.
+- [ ] Entitlements: `com.apple.developer.push-to-talk` and `aps-environment`
+      only in voice builds; no CarPlay entitlement in any build sent to
+      TestFlight unless Apple has granted it.
+- [ ] `NSSupportsLiveActivities: true`; the `RoadPingLiveActivity` widget
+      extension (bundle id `<app>.liveactivity`) is embedded.
 - [ ] `ITSAppUsesNonExemptEncryption: false`.
 
 ## 4. Apple Developer / App Store Connect
@@ -111,6 +118,7 @@ will be submitted:
 - [ ] Location prompt copy matches §3.
 - [ ] Microphone prompt copy matches §3.
 - [ ] Hide/Stop drop presence immediately (confirmed on a second device).
+- [ ] Voice builds: the two-iPhone plan in docs/PHASE3_VOICE_PTT.md passes.
 - [ ] Account deletion fully clears the local session and the auth user.
 
 ## 9. Pre-flight greps (run from repo root)

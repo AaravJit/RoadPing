@@ -1,6 +1,6 @@
 # RoadPing — Privacy Policy
 
-_Last updated: 2026-09-30_
+_Last updated: 2026-10-01_
 
 This is the canonical privacy policy for RoadPing. The in-app screen at
 `app/privacy.tsx` mirrors this text. Both must be kept in sync. The public URL
@@ -11,7 +11,8 @@ of this document is what is linked from App Store Connect.
 RoadPing is a live, map-first voice tool for nearby drivers. We collect the
 minimum information needed to make that work and we do not sell your data.
 
-- Your location is used only while RoadPing is active.
+- Your location is used only while you are live, from when you tap Go Live
+  until you end it. RoadPing never goes live on its own.
 - We do not store location history.
 - Voice is live only — nothing is recorded or saved.
 - You can delete your account from inside the app.
@@ -30,17 +31,28 @@ While RoadPing is active we briefly process:
 - Your current location (latitude, longitude, accuracy, heading, speed).
 - Live session and voice session metadata (start time, broadcast range,
   expires_at).
+- While you are live with voice on: a push-to-talk token for this iPhone
+  (issued by Apple, deleted when your live session ends), and short-lived
+  records of each time you talk (who, when, and in which room; deleted within
+  about an hour). Never what you said.
 
 ## Location
 
-RoadPing only requests "While Using the App" location access. We do not
-request background location. We do not store location history.
+RoadPing only requests "While Using the App" location access. It never asks
+for "Always". We do not store location history.
+
+Once you tap Go Live, RoadPing keeps using your location while you stay live,
+including when RoadPing is in the background or your screen is locked, so
+nearby drivers keep seeing you and private zones keep working. iOS shows a
+location indicator in the status bar the whole time. This stops the moment
+your live session ends. If RoadPing is closed while you are live, the session
+ends and does not restart when you open the app again.
 
 Your current position is held only as your live presence record. It is deleted
 when:
 
 - You end your live session.
-- You sign out, close, or background the app.
+- You sign out, or RoadPing is closed (force-quit or ended by iOS).
 - Your session expires from inactivity (server-side heartbeat timeout).
 - You drive into a private zone.
 
@@ -58,9 +70,15 @@ Private Zones and Stop & Hide wherever that matters to you.
 
 ## Microphone and voice
 
-The microphone is only used while you hold the talk button. Voice is delivered
-live to nearby drivers or room members. RoadPing does not record, store, or
-transcribe voice.
+The microphone is only used while you talk: while you hold the talk button,
+or use iOS push to talk from the Lock Screen, a headset button or CarPlay.
+Each time you talk, our servers decide who may hear it (live drivers within
+range, or the members of the room you have open), and each listener gets a
+private, short-lived pass for that one moment. Voice is delivered live through
+Agora and is not recorded, stored, or transcribed by RoadPing.
+
+Do Not Disturb pauses incoming voice: while it is on, no one's voice is played
+to you. You stay visible and can still talk.
 
 ## Blocks and reports
 
@@ -86,7 +104,11 @@ RoadPing uses:
 
 - **Supabase** — authentication, Postgres database, Edge Functions, Realtime.
   Acts as a data processor on our behalf.
-- **Apple Push Notification Service** — only if you opt in to notifications.
+- **Agora** — live voice delivery. Agora carries the audio of a talk in real
+  time and sees technical data such as your IP address and a random
+  per-talk ID. RoadPing does not ask Agora to record anything.
+- **Apple Push Notification Service** — push to talk (so you can hear nearby
+  drivers with RoadPing in the background), and notifications if you opt in.
 - **Apple Maps** — for map tile rendering on iOS via `react-native-maps`.
 
 These providers process data on our behalf so RoadPing can function.
@@ -94,8 +116,7 @@ These providers process data on our behalf so RoadPing can function.
 ## Your choices
 
 - You can revoke location or microphone access in iOS Settings at any time.
-- You can turn on Do Not Disturb in Settings to hide your speaking indicator
-  from nearby drivers.
+- You can turn on Do Not Disturb to stop hearing incoming voice.
 - You can stop being visible at any time by ending your live session.
 - You can delete your account from Settings → Delete account. The deletion is
   immediate and irreversible.
