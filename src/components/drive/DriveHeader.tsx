@@ -24,6 +24,8 @@ interface DriveHeaderProps {
   profileName: string | null;
   avatarUri: string | null;
   onOpenProfile: () => void;
+  /** Live, but heartbeats are failing (no signal): shown instead of the count. */
+  reconnecting?: boolean;
   /** Screenshot/demo builds: make fixture data impossible to mistake. */
   demo?: boolean;
 }
@@ -42,15 +44,18 @@ export function DriveHeader({
   profileName,
   avatarUri,
   onOpenProfile,
+  reconnecting = false,
   demo = false,
 }: DriveHeaderProps) {
   const { colors } = useTheme();
   const styles = useStyles();
   const isLive = status === 'live';
-  const nearbyText = `${nearbyCount} nearby`;
+  const nearbyText = reconnecting ? 'Reconnecting…' : `${nearbyCount} nearby`;
 
   const a11yLabel = isLive
-    ? `RoadPing, live, ${nearbyCount} ${nearbyCount === 1 ? 'driver' : 'drivers'} nearby`
+    ? reconnecting
+      ? 'RoadPing, live, reconnecting'
+      : `RoadPing, live, ${nearbyCount} ${nearbyCount === 1 ? 'driver' : 'drivers'} nearby`
     : `RoadPing, ${STATUS_TEXT[status]}`;
 
   return (
@@ -79,7 +84,7 @@ export function DriveHeader({
             <AppText
               variant="subheadline"
               weight="semibold"
-              color="secondary"
+              color={reconnecting ? 'warning' : 'secondary'}
               numberOfLines={1}
               maxScale={DRIVE_CHROME_MAX_SCALE}
               tabular

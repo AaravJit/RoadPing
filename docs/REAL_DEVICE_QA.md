@@ -121,6 +121,8 @@ to exercise the permission gates from scratch.
 - [ ] Releasing shows STOPPING → idle.
 - [ ] Hold-to-talk works while panning the map.
 - [ ] Hold-to-talk works inside a private drive room.
+- [ ] Voice builds: run the full two-iPhone plan in docs/PHASE3_VOICE_PTT.md
+      (background, Lock Screen, headset, CarPlay, DND, block, rooms).
 
 ## 14. Report / Block
 
@@ -156,9 +158,20 @@ to exercise the permission gates from scratch.
 
 ## 19. App lifecycle
 
-- [ ] Send the app to background while LIVE → presence is dropped server-side; second device confirms invisibility within heartbeat window.
-- [ ] Foreground the app → returns to offline panel; no crash.
-- [ ] Lock the phone for ~1 minute while LIVE → unlock → app recovers cleanly.
+- [ ] Send the app to background while LIVE → stays live (Phase 3): blue
+      location indicator shown, second device keeps seeing you, heartbeats
+      continue (server `location_presence.updated_at` advances).
+- [ ] Lock the phone for 10 minutes while LIVE → still live; Live Activity
+      shows "Live"; unlock → app recovers cleanly.
+- [ ] Force-quit while LIVE → second device stops seeing you within ~25 s;
+      reopen → "Your live session ended" notice, app is NOT live, Live
+      Activity is gone.
+- [ ] Drive into a private zone with the phone locked → session ends, Live
+      Activity ends, second device stops seeing you.
+- [ ] iOS Settings → Location → Never while LIVE → session ends with the
+      "Location was turned off" notice.
+- [ ] Build without the native module (Expo Go): backgrounding while LIVE
+      still ends the session (old behaviour).
 
 ## 20. Stability + console
 

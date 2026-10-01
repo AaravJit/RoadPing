@@ -7,46 +7,66 @@ Trim/paste as needed.
 
 ## What RoadPing does
 
-RoadPing is a live, map-first voice tool for nearby drivers. After signing in,
-adding a vehicle, and tapping **Start RoadPing**, the user appears as a live
-presence dot to other RoadPing users within their selected broadcast range
-(500 m – 5 km). They can hold a button to broadcast a short live voice alert
-to nearby drivers or to a private room they've joined.
+RoadPing is a live, map-first push-to-talk tool for nearby drivers. After
+signing in, adding a vehicle, and tapping **Go Live**, the user appears in
+other live drivers' Nearby list, with a broad distance range only, within
+their selected range (½, 1, 2 or 3 mi). They can hold a button (or use iOS
+push to talk) to talk live to nearby drivers or to a private room they've
+joined.
 
-The app is map-first and live-only. Users are invisible by default and only
-appear after explicitly tapping Start.
+Users are invisible by default and only appear after explicitly tapping Go
+Live, until they end the session.
 
-## Why we need each permission
+## Why we need each permission and background mode
 
-- **Location (When In Use only)** — Used **only while RoadPing is active** to
-  show nearby live drivers and to center the user's own map. No
-  background location. No location history. Other users are never shown
-  coordinates, an exact distance or a direction — only a broad distance
-  range (for example "½–1 mi"), and other drivers are not drawn on the map.
-- **Microphone** — Used **only while the user holds the talk button** to send
-  live voice. In a **Drive Room**, the held audio is transmitted to other room
-  members in real time over Agora's voice channel (transport only). For the
-  open **nearby** map, holding currently raises a **live speaking indicator**
-  to nearby drivers (see "Live audio status" below). Voice is never recorded,
-  stored, or transcribed in either mode — releasing the button ends the mic.
+- **Location (When In Use only; never Always)** — Used only while the user is
+  **live**: from tapping **Go Live** until they end it. While live, location
+  continues in the background (UIBackgroundModes `location`, the blue location
+  indicator is shown) so the driver stays visible to nearby drivers and the
+  server keeps enforcing their private zones while the phone is locked in a
+  mount. RoadPing never goes live on its own: if the app is closed while
+  live, the session ends and is not resumed on the next launch. No location
+  history. Other users are never shown coordinates, an exact distance or a
+  direction — only a broad distance range (for example "½–1 mi").
+- **Push to Talk (UIBackgroundModes `push-to-talk`, PushToTalk entitlement)**
+  — RoadPing is a walkie-talkie for drivers. While live, the app joins one
+  Apple PushToTalk channel ("RoadPing Nearby", or the open room). The driver
+  can talk from the system Lock Screen / Dynamic Island UI, a Bluetooth or
+  wired headset button, or CarPlay's play/pause control, and hears nearby
+  drivers with the app in the background, delivered by `pushtotalk` APNs
+  pushes. Leaving the channel from the system UI ends the live session.
+- **Microphone** — Used only while the user talks (holding the button, or a
+  system push-to-talk transmission). Never recorded, stored, or transcribed.
+- **Live Activity** — While live, a Live Activity on the Lock Screen,
+  Dynamic Island and CarPlay shows "Live", "Talking" or who is talking. It has
+  no buttons. It ends when the session ends.
 
-## Live audio (Agora) — implementation status
+RoadPing does **not** use the `audio` or `voip` background modes.
+
+## Live audio (Agora) — how it works
 
 RoadPing uses **Agora** purely as a real-time audio **transport**. Supabase
-still owns identity, live sessions, nearby range, rooms, and moderation; a
-Supabase Edge Function (`create-agora-token`) mints a short-lived RTC token
-only after verifying the caller's live session (nearby) or room membership
-(room). The Agora App Certificate never leaves the server.
+owns identity, live sessions, range, rooms and moderation.
 
-- **Drive Rooms → real group audio.** All members of a room share one Agora
-  channel (`roadping-room-<id>`). Hold to talk → others hear you live.
-- **Nearby (open map) → live speaking indicator only.** Real geo-grouped
-  nearby audio requires server-side channel assignment and is intentionally
-  deferred, so we never put a user "on a channel with the whole world."
-- **No audio persistence anywhere** — no recordings, files, transcripts, or
-  uploads. Agora carries live frames only.
-- Live audio requires the native build (TestFlight / App Store). It does not
-  run in Expo Go.
+- Every press creates its own private Agora channel on the server. The server
+  decides who may hear that press (live drivers within range or members of
+  the room the speaker has open, minus blocked users, Do Not Disturb users
+  and banned accounts) and gives each listener a personal token valid for at
+  most 45 seconds, re-checked on renewal. There is no shared channel.
+- The Agora App Certificate and the APNs key stay on the server.
+- No audio persistence anywhere: no recordings, files, transcripts or uploads.
+
+## How to test background live and push to talk
+
+Needs two iPhones signed in to two accounts, both live within ½ mile (or in
+the same room).
+
+1. Phone A: Go Live, then lock the screen. The location indicator and the
+   RoadPing Live Activity stay visible.
+2. Phone B: hold the talk button. Phone A plays the voice with its screen
+   locked and shows the speaker in the system push-to-talk UI.
+3. Phone A: talk from the Lock Screen push-to-talk button. Phone B hears it.
+4. Phone A: tap **Leave** in the system UI → the live session ends.
 
 ## Demo account
 
@@ -105,8 +125,11 @@ running through profile/vehicle setup.
   upload, no transcription. The microphone session ends as soon as the
   user releases the talk button.
 - **Location history is not stored.** Only the current live presence row
-  exists, and it is deleted on Stop / Hide / sign out / app background /
-  expiry / private zone entry.
+  exists, and it is deleted on End / sign out / app closed / expiry /
+  private zone entry.
+- **Who hears a press is decided by the server for every press**, and
+  re-checked at every token renewal (≤ 45 s); blocking someone cuts any
+  audio between the two immediately.
 - Coordinates, exact distances and directions are **never returned** to
   other users — the `get-nearby-drivers` Edge Function snaps both positions
   to a ~250 m grid server-side and returns only a broad distance band, held

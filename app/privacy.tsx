@@ -10,7 +10,7 @@ import React from 'react';
 import { Bullet, DocBody, DocSection, MailLink, P } from '@/components/Document';
 import { AppText, ScreenScroll } from '@/components/ui';
 
-const LAST_UPDATED = '2026-09-30';
+const LAST_UPDATED = '2026-10-01';
 const SUPPORT_EMAIL = 'support@roadping.app';
 
 export default function PrivacyScreen() {
@@ -27,7 +27,7 @@ export default function PrivacyScreen() {
             collect the minimum information needed to make that work and we do
             not sell your data.
           </P>
-          <Bullet>Your location is used only while RoadPing is active.</Bullet>
+          <Bullet>Your location is used only while you are live, from Go Live until you end it. RoadPing never goes live on its own.</Bullet>
           <Bullet>We do not store location history.</Bullet>
           <Bullet>Voice is live only — nothing is recorded or saved.</Bullet>
           <Bullet>You can delete your account from inside the app.</Bullet>
@@ -39,22 +39,37 @@ export default function PrivacyScreen() {
           <Bullet>Profile: display name, handle, avatar URL, preferences.</Bullet>
           <Bullet>Vehicles you add (label, type, make, model, year, color).</Bullet>
           <Bullet>Private zones you create (center + radius).</Bullet>
-          <P>While RoadPing is active we briefly process:</P>
+          <P>While you are live we briefly process:</P>
           <Bullet>Your current location (latitude, longitude, accuracy, heading, speed).</Bullet>
           <Bullet>Live session and voice session metadata (start time, range).</Bullet>
+          <Bullet>
+            With voice on: a push-to-talk token for this iPhone (deleted when
+            your live session ends) and short-lived records of each time you
+            talk (who, when, which room; deleted within about an hour). Never
+            what you said.
+          </Bullet>
         </DocSection>
 
         <DocSection title="Location">
           <P>
-            RoadPing only requests "While Using the App" location access. We do
-            not request background location. We do not store location history.
+            RoadPing only requests "While Using the App" location access. It
+            never asks for "Always". We do not store location history.
+          </P>
+          <P>
+            Once you tap Go Live, RoadPing keeps using your location while you
+            stay live, including when RoadPing is in the background or your
+            screen is locked, so nearby drivers keep seeing you and private
+            zones keep working. iOS shows a location indicator the whole time.
+            This stops the moment your live session ends. If RoadPing is
+            closed while you are live, the session ends and does not restart
+            when you open the app again.
           </P>
           <P>
             Your current position is held only as your live presence record. It
             is deleted when:
           </P>
           <Bullet>You end your live session.</Bullet>
-          <Bullet>You sign out, close, or background the app.</Bullet>
+          <Bullet>You sign out, or RoadPing is closed (force-quit or ended by iOS).</Bullet>
           <Bullet>Your session expires from inactivity.</Bullet>
           <Bullet>You drive into a private zone.</Bullet>
           <P>
@@ -76,9 +91,17 @@ export default function PrivacyScreen() {
 
         <DocSection title="Microphone and voice">
           <P>
-            The microphone is only used while you hold the talk button. Voice
-            is delivered live to nearby drivers or room members. RoadPing does
-            not record, store, or transcribe voice.
+            The microphone is only used while you talk: while you hold the
+            talk button, or use iOS push to talk from the Lock Screen, a
+            headset button or CarPlay. Each time you talk, our servers decide
+            who may hear it (live drivers within range, or the members of the
+            room you have open), and each listener gets a private, short-lived
+            pass for that one moment. Voice is delivered live through Agora
+            and is not recorded, stored, or transcribed by RoadPing.
+          </P>
+          <P>
+            Do Not Disturb pauses incoming voice: while it is on, no one's
+            voice is played to you. You stay visible and can still talk.
           </P>
         </DocSection>
 
@@ -106,16 +129,19 @@ export default function PrivacyScreen() {
 
         <DocSection title="Third parties">
           <P>
-            RoadPing uses Supabase (authentication, database, edge functions)
-            and Apple Push Notification Service if you opt into notifications.
-            Map tiles are rendered by Apple Maps on iOS. These providers
-            process data on our behalf so RoadPing can function.
+            RoadPing uses Supabase (authentication, database, edge functions),
+            Agora (live voice delivery; it sees technical data such as your IP
+            address and a random per-talk ID, and RoadPing does not ask it to
+            record anything) and Apple Push Notification Service (push to
+            talk, and notifications if you opt in). Map tiles are rendered by
+            Apple Maps on iOS. These providers process data on our behalf so
+            RoadPing can function.
           </P>
         </DocSection>
 
         <DocSection title="Your choices">
           <Bullet>You can revoke location or microphone access in iOS Settings at any time.</Bullet>
-          <Bullet>You can turn on Do Not Disturb in Settings to hide your speaking indicator.</Bullet>
+          <Bullet>You can turn on Do Not Disturb to stop hearing incoming voice.</Bullet>
           <Bullet>You can stop being visible at any time by ending your live session.</Bullet>
           <Bullet>You can delete your account from Settings → Delete Account.</Bullet>
         </DocSection>

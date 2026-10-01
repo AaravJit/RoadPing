@@ -39,14 +39,14 @@ const STEPS: readonly Step[] = [
     kind: 'intro',
     icon: 'eye.slash.fill',
     title: "You're invisible until you go live",
-    copy: 'Nothing is shared until you tap Go Live. Leaving the app ends your live session.',
+    copy: 'Nothing is shared until you tap Go Live, and you stay live only until you end it.',
     primary: 'Continue',
   },
   {
     kind: 'location',
     icon: 'location.fill',
     title: 'Location',
-    copy: 'See and be seen by nearby live drivers while RoadPing is active.',
+    copy: 'See and be seen by nearby live drivers while you are live. Choose While Using the App.',
     primary: 'Allow Location',
   },
   {

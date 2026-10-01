@@ -18,7 +18,7 @@ import { Stack, useRouter } from 'expo-router';
 import { AppText, Button, Icon, ListSection, Notice, ScreenScroll } from '@/components/ui';
 import { useAuth } from '@/hooks/useAuth';
 import { deleteAccount } from '@/services/account';
-import { stopLiveSession } from '@/services/liveSession';
+import { liveController } from '@/services/live/liveController';
 import { makeStyles, useTheme } from '@/theme/ThemeProvider';
 import { MIN_TOUCH_TARGET, SCREEN_INSET, Spacing } from '@/theme/spacing';
 
@@ -80,11 +80,8 @@ export default function DeleteAccountScreen() {
     setDeleting(true);
     try {
       // Best-effort: end the server session before destructive work.
-      try {
-        await stopLiveSession();
-      } catch {
-        // Already ended or unreachable — proceed.
-      }
+      // Ends live locally too: location, voice, Live Activity.
+      await liveController.stop('logout');
 
       await deleteAccount();
 

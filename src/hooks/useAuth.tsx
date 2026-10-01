@@ -11,6 +11,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/services/supabase';
 import { signOut as authSignOut } from '@/services/auth';
+import { liveController } from '@/services/live/liveController';
 
 // ─── Context shape ────────────────────────────────────────────────────────────
 
@@ -44,6 +45,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setIsLoading(false);
+      // Cold launch: end any live session a previous run left behind. Never
+      // resumes it (Phase 3 rule: only Go Live starts a session).
+      if (data.session) void liveController.recoverAfterLaunch();
     });
 
     // Subscribe to future auth events: sign-in, sign-out, token refresh,
