@@ -8,6 +8,9 @@
  *
  *   register   { installation_id, live_session_id, token (hex), apns_environment }
  *   unregister { installation_id? }   (omit to remove every device's token)
+ *
+ * Registering is gated by _shared/voiceAccess.ts (403 voice_unavailable for
+ * accounts not admitted); unregistering never is.
  */
 
 import type { SupabaseClient, User } from '@supabase/supabase-js';
@@ -15,11 +18,13 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { err, ok } from '../_shared/errors.ts';
 import { isUUID } from '../_shared/validate.ts';
 import type { RateLimitBucket } from '../_shared/rateLimit.ts';
+import { type VoiceAccess, voiceAllowed } from '../_shared/voiceAccess.ts';
 
 export interface PttTokenDeps {
   getAuthUser: (req: Request) => Promise<User | null>;
   createAdminClient: () => SupabaseClient;
   isRateLimited: (admin: SupabaseClient, userId: string, bucket: RateLimitBucket) => Promise<boolean>;
+  access: VoiceAccess;
 }
 
 const TOKEN_RE = /^[0-9a-fA-F]{64,512}$/;
@@ -58,6 +63,7 @@ export async function handlePttToken(req: Request, deps: PttTokenDeps): Promise<
     }
 
     if (body.action !== 'register') return err(400, 'Unknown action');
+    if (!voiceAllowed(deps.access, user.id)) return err(403, 'voice_unavailable');
 
     const { installation_id, live_session_id, token, apns_environment } = body;
     if (!isUUID(installation_id)) return err(400, 'installation_id must be a UUID');

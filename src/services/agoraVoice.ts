@@ -17,7 +17,8 @@
  * Audio session:
  *  • 'ptt' mode: Apple's PushToTalk framework owns and activates the audio
  *    session. Agora is told not to touch it at all
- *    (AudioSessionOperationRestrictionAll).
+ *    (AudioSessionOperationRestrictionAll), before its audio module is
+ *    enabled (voice/agoraAudioSetup.ts).
  *  • 'direct' mode (foreground, no PushToTalk): Agora manages it with the
  *    loudspeaker as the DEFAULT route only, so Bluetooth, CarPlay and wired
  *    headsets still take over when connected. setEnableSpeakerphone(true),
@@ -30,6 +31,13 @@
  */
 import type { IRtcEngineEx, IRtcEngineEventHandler, RtcConnection } from 'react-native-agora';
 import { IS_EXPO_GO, DISABLE_AGORA } from './env';
+import {
+  type AudioMode,
+  applyAudioMode,
+  listenerJoinOptions,
+  prepareEngineAudio,
+  speakerJoinOptions,
+} from './voice/agoraAudioSetup';
 
 type AgoraModule = typeof import('react-native-agora');
 let _mod: AgoraModule | null = null;
@@ -63,7 +71,7 @@ export function isAgoraAvailable(): boolean {
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
-export type AudioMode = 'ptt' | 'direct';
+export type { AudioMode };
 
 export type ConnectionRole = 'speaker' | 'listener';
 
@@ -124,18 +132,19 @@ function failAndLeave(channel: string, reason: Extract<AgoraConnectionEvent, { t
   emit({ type: 'failed', channel, reason });
 }
 
-function applyMode(engine: IRtcEngineEx, mod: AgoraModule) {
-  if (_mode === 'ptt') {
-    engine.setAudioSessionOperationRestriction(
-      mod.AudioSessionOperationRestriction.AudioSessionOperationRestrictionAll,
-    );
-  } else {
-    engine.setAudioSessionOperationRestriction(
-      mod.AudioSessionOperationRestriction.AudioSessionOperationRestrictionNone,
-    );
-    // Default route only: a connected Bluetooth / CarPlay / wired route wins.
-    engine.setDefaultAudioRouteToSpeakerphone(true);
-  }
+function audioConstants(mod: AgoraModule) {
+  return {
+    restrictionAll: mod.AudioSessionOperationRestriction.AudioSessionOperationRestrictionAll,
+    restrictionNone: mod.AudioSessionOperationRestriction.AudioSessionOperationRestrictionNone,
+  };
+}
+
+function roleConstants(mod: AgoraModule) {
+  return {
+    channelProfileLiveBroadcasting: mod.ChannelProfileType.ChannelProfileLiveBroadcasting,
+    clientRoleBroadcaster: mod.ClientRoleType.ClientRoleBroadcaster,
+    clientRoleAudience: mod.ClientRoleType.ClientRoleAudience,
+  };
 }
 
 function ensureEngine(appId: string): IRtcEngineEx | null {
@@ -150,9 +159,8 @@ function ensureEngine(appId: string): IRtcEngineEx | null {
     channelProfile: mod.ChannelProfileType.ChannelProfileLiveBroadcasting,
     audioScenario: mod.AudioScenarioType.AudioScenarioChatroom,
   });
-  engine.enableAudio();
-  engine.disableVideo();
-  applyMode(engine, mod);
+  // Session ownership before the audio module starts (agoraAudioSetup.ts).
+  prepareEngineAudio(engine, audioConstants(mod), _mode);
 
   const S = mod.ConnectionStateType;
   const R = mod.ConnectionChangedReasonType;
@@ -232,7 +240,7 @@ export function onAgoraEvent(listener: AgoraEventListener): () => void {
 export function setAudioMode(mode: AudioMode): void {
   _mode = mode;
   const mod = loadAgora();
-  if (_engine && mod) applyMode(_engine, mod);
+  if (_engine && mod) applyAudioMode(_engine, audioConstants(mod), mode);
 }
 
 export function audioMode(): AudioMode {
@@ -247,14 +255,7 @@ export function publish(args: { appId: string; channel: string; uid: number; tok
   if (_connections.has(args.channel)) return true;
   const c: Connection = { channel: args.channel, uid: args.uid, role: 'speaker', speakerUid: null };
   _connections.set(args.channel, c);
-  const rc = engine.joinChannelEx(args.token, rtc(c), {
-    channelProfile: mod.ChannelProfileType.ChannelProfileLiveBroadcasting,
-    clientRoleType: mod.ClientRoleType.ClientRoleBroadcaster,
-    publishMicrophoneTrack: true,
-    publishCameraTrack: false,
-    autoSubscribeAudio: false,
-    autoSubscribeVideo: false,
-  });
+  const rc = engine.joinChannelEx(args.token, rtc(c), speakerJoinOptions(roleConstants(mod)));
   if (rc < 0) {
     _connections.delete(args.channel);
     return false;
@@ -280,14 +281,7 @@ export function listen(args: {
   if (_connections.has(args.channel)) return true;
   const c: Connection = { channel: args.channel, uid: args.uid, role: 'listener', speakerUid: args.speakerUid };
   _connections.set(args.channel, c);
-  const rc = engine.joinChannelEx(args.token, rtc(c), {
-    channelProfile: mod.ChannelProfileType.ChannelProfileLiveBroadcasting,
-    clientRoleType: mod.ClientRoleType.ClientRoleAudience,
-    publishMicrophoneTrack: false,
-    publishCameraTrack: false,
-    autoSubscribeAudio: true,
-    autoSubscribeVideo: false,
-  });
+  const rc = engine.joinChannelEx(args.token, rtc(c), listenerJoinOptions(roleConstants(mod)));
   if (rc < 0) {
     _connections.delete(args.channel);
     return false;

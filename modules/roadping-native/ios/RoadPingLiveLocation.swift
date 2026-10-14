@@ -17,6 +17,19 @@ import Foundation
 ///    explicit way for a When In Use app to continue a session in the
 ///    background.
 ///
+/// Freshness (src/services/live/locationFreshness.ts is the policy; the
+/// constants below mirror it and a test checks they match):
+///  - Every tick reports the real fix's timestamp, age and accuracy.
+///    Coordinates are included only for a fix at most maxFixAge old and
+///    within maxAccuracy; otherwise the tick says why ("stale") and the
+///    heartbeat is skipped (fail closed).
+///  - No new fix is NOT proof the phone is still: with a 50 m distance filter a
+///    parked phone simply stops getting updates. Once the last fix is older
+///    than refreshAfter (or there is none), the distance filter is dropped so
+///    Core Location delivers a new fix, and restored as soon as a fresh,
+///    accurate one arrives. requestLocation() is not used: Apple documents
+///    that it does nothing while location services are already running.
+///
 /// Expo's expo-location background API is not used: it requires a TaskManager
 /// task, and TaskManager re-registers tasks when iOS relaunches the app,
 /// which would resume location on a cold launch. RoadPing never does that.
@@ -32,8 +45,18 @@ final class RoadPingLiveLocation: NSObject, CLLocationManagerDelegate {
   private var timer: DispatchSourceTimer?
   private var backgroundSession: AnyObject?
   private var intervalSeconds: Double = 12
-  /// A fix older than this is not sent; the heartbeat goes without a position.
-  private let maxFixAge: Double = 120
+  /// Normal distance filter (metres) while fixes are fresh.
+  private let normalDistanceFilter: CLLocationDistance = 50
+  /// A fix older than this (seconds) is never sent: FIX_MAX_AGE_MS.
+  private let maxFixAge: TimeInterval = 45
+  /// Past this age (seconds) a fresh fix is requested: FIX_REFRESH_AFTER_MS.
+  private let refreshAfter: TimeInterval = 20
+  /// Horizontal accuracy (metres) beyond which a fix is not sent: FIX_MAX_ACCURACY_M.
+  private let maxAccuracy: CLLocationAccuracy = 300
+  /// Tolerated fix timestamp in the future (seconds): FIX_MAX_FUTURE_MS.
+  private let maxFuture: TimeInterval = 5
+  /// True while the distance filter is lifted to obtain a fresh fix.
+  private var refreshing = false
 
   static func hasBackgroundMode() -> Bool {
     let modes = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String] ?? []
@@ -70,7 +93,8 @@ final class RoadPingLiveLocation: NSObject, CLLocationManagerDelegate {
     m.delegate = self
     m.activityType = .automotiveNavigation
     m.desiredAccuracy = kCLLocationAccuracyHundredMeters
-    m.distanceFilter = 50
+    m.distanceFilter = normalDistanceFilter
+    refreshing = false
     m.pausesLocationUpdatesAutomatically = false
 
     let background = RoadPingLiveLocation.hasBackgroundMode()
@@ -92,6 +116,7 @@ final class RoadPingLiveLocation: NSObject, CLLocationManagerDelegate {
 
   func stop() {
     running = false
+    refreshing = false
     timer?.cancel()
     timer = nil
     if let m = manager {
@@ -124,16 +149,49 @@ final class RoadPingLiveLocation: NSObject, CLLocationManagerDelegate {
   /// guarantees the cadence keeps going while the app is in the background.
   private func tick() {
     guard running else { return }
-    var body: [String: Any] = ["at": Date().timeIntervalSince1970 * 1000]
-    if let fix = lastFix, -fix.timestamp.timeIntervalSinceNow <= maxFixAge {
+    let now = Date()
+    var body: [String: Any] = ["at": now.timeIntervalSince1970 * 1000]
+    guard let fix = lastFix else {
+      body["stale"] = "no_fix"
+      beginRefresh()
+      RoadPingEvents.shared.emit("liveLocationTick", body)
+      return
+    }
+    let age = now.timeIntervalSince(fix.timestamp)
+    body["fixAt"] = fix.timestamp.timeIntervalSince1970 * 1000
+    body["ageMs"] = age * 1000
+    body["accuracy"] = fix.horizontalAccuracy
+    if age < -maxFuture {
+      body["stale"] = "future"
+    } else if age > maxFixAge {
+      body["stale"] = "too_old"
+    } else if fix.horizontalAccuracy > maxAccuracy {
+      body["stale"] = "inaccurate"
+    } else {
       body["lat"] = fix.coordinate.latitude
       body["lng"] = fix.coordinate.longitude
-      body["accuracy"] = fix.horizontalAccuracy
-      body["ageMs"] = -fix.timestamp.timeIntervalSinceNow * 1000
       if fix.course >= 0 { body["heading"] = fix.course }
       if fix.speed >= 0 { body["speed"] = fix.speed }
     }
+    if age > refreshAfter || fix.horizontalAccuracy > maxAccuracy {
+      beginRefresh()
+    }
     RoadPingEvents.shared.emit("liveLocationTick", body)
+  }
+
+  /// Lifts the distance filter so Core Location reports the current position
+  /// even if the phone has not moved 50 m. Cheap: the location hardware is
+  /// already running at the same desiredAccuracy; only delivery changes.
+  private func beginRefresh() {
+    guard running, !refreshing, let m = manager else { return }
+    refreshing = true
+    m.distanceFilter = kCLDistanceFilterNone
+  }
+
+  private func endRefresh() {
+    guard refreshing else { return }
+    refreshing = false
+    manager?.distanceFilter = normalDistanceFilter
   }
 
   // MARK: CLLocationManagerDelegate
@@ -141,11 +199,18 @@ final class RoadPingLiveLocation: NSObject, CLLocationManagerDelegate {
   func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
     guard running, let fix = locations.last, fix.horizontalAccuracy >= 0 else { return }
     let first = lastFix == nil
+    let wasRefreshing = refreshing
     lastFix = fix
-    if first { tick() }
+    let age = Date().timeIntervalSince(fix.timestamp)
+    let fresh = age <= refreshAfter && age >= -maxFuture && fix.horizontalAccuracy <= maxAccuracy
+    if fresh { endRefresh() }
+    // Report a recovered fix right away instead of waiting for the next tick.
+    if first || (wasRefreshing && fresh) { tick() }
   }
 
   func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+    // locationUnknown is transient: Core Location keeps trying, and until a
+    // fix arrives ticks carry no coordinates (fail closed). Denied ends live.
     if let clError = error as? CLError, clError.code == .denied {
       RoadPingEvents.shared.emit("liveLocationError", ["code": "denied"])
     }

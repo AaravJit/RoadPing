@@ -27,6 +27,7 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 
 import { RoadPingNative, addNativeListener, type PttIncomingPayload } from '../../../modules/roadping-native';
 import * as agora from '../agoraVoice';
+import { PTT_JOIN_TIMEOUT_MS, waitForPttReadiness } from './pttReadiness';
 import { supabase } from '../supabase';
 import { startTalking, stopTalking } from '../voice';
 import {
@@ -150,6 +151,7 @@ class VoiceController {
   private registeredToken: string | null = null;
   private nameResolver: NameResolver = () => null;
   private pttLeftByUserHandler: (() => void) | null = null;
+  private joinTimer: ReturnType<typeof setTimeout> | null = null;
   private wired = false;
 
   // ── Subscription ──────────────────────────────────────────────────────────
@@ -211,20 +213,37 @@ class VoiceController {
       AppState.addEventListener('change', (s: AppStateStatus) => this.onAppState(s)),
       { remove: agora.onAgoraEvent((e) => this.onAgora(e)) },
       addNativeListener('pttJoined', () => {
+        this.clearJoinTimer();
+        if (!this.live) return;
         this.ptt = 'ready';
         this.setMode('ptt');
         if (this.issue === 'ptt_unavailable' || this.issue === 'background_voice_off') this.issue = null;
         this.notify();
+        void this.registerToken();
       }),
-      addNativeListener('pttJoinFailed', () => this.pttFallback()),
+      addNativeListener('pttJoinFailed', () => {
+        this.clearJoinTimer();
+        if (this.live) this.pttFallback();
+      }),
+      // Recovery: PushToTalk became available after a fallback. A channel can
+      // be joined only in the foreground, so retry only while the app is open.
+      addNativeListener('pttAvailability', (e) => {
+        if (e.availability !== 'ready' || !this.live || this.ptt !== 'unavailable' || !this.appActive) return;
+        if (this.liveSessionId) void this.joinPtt(this.liveSessionId);
+      }),
       addNativeListener('pttLeft', (e) => {
-        const wasReady = this.ptt === 'ready';
+        if (!this.live) {
+          this.ptt = 'off';
+          return this.notify();
+        }
+        if (this.ptt === 'unavailable') return; // our own leave after a failed join
+        if (this.ptt === 'joining') return this.pttFallback();
         this.ptt = 'off';
-        if (!this.live || !wasReady) return this.notify();
         if (e.reason === 'user') {
           // "Leave" in the system UI means stop going live.
           this.pttLeftByUserHandler?.();
-        } else if (e.reason !== 'app') {
+        } else {
+          // Still live but the channel is gone: say so, keep foreground voice.
           this.pttFallback();
         }
       }),
@@ -252,6 +271,7 @@ class VoiceController {
   }
 
   private pttFallback() {
+    this.clearJoinTimer();
     this.ptt = RoadPingNative ? 'unavailable' : 'off';
     if (this.tx.mode === 'ptt') this.setMode('direct');
     if (this.live && this.tx.mode === 'direct') this.issue = 'ptt_unavailable';
@@ -282,32 +302,72 @@ class VoiceController {
     this.subscribeRealtime();
     if (args.roomId !== null) void this.pushContext();
 
-    const native = RoadPingNative;
-    const availability = native?.pttState().availability;
-    if (native && (availability === 'ready' || availability === 'initializing')) {
-      this.ptt = 'joining';
+    if (!RoadPingNative) {
+      this.ptt = 'off';
       this.notify();
-      try {
-        await native.pttJoin(this.channelTitle());
-        // pttJoined switches the mode; the token may already be known.
-        const st = native.pttState();
-        if (st.token && !this.pttToken) {
-          this.pttToken = { token: st.token, environment: native.apnsEnvironment() };
-        }
-        void this.registerToken();
-      } catch {
+      return;
+    }
+    await this.joinPtt(args.liveSessionId);
+  }
+
+  /**
+   * Waits (bounded) for the native PushToTalk channel manager, then joins.
+   * Mode stays 'direct' until the system confirms the join (pttJoined); any
+   * failure or timeout is a visible fallback, never a claimed PTT channel.
+   */
+  private async joinPtt(sessionId: string) {
+    const native = RoadPingNative;
+    if (!native) return;
+    const stillThisSession = () => this.live && this.liveSessionId === sessionId;
+    this.ptt = 'joining';
+    this.notify();
+    const readiness = await waitForPttReadiness({
+      current: () => native.pttState().availability,
+      onAvailability: (cb) => {
+        const sub = addNativeListener('pttAvailability', (e) => cb(e.availability));
+        return () => sub.remove();
+      },
+      setTimer: (cb, ms) => setTimeout(cb, ms),
+      clearTimer: (t) => clearTimeout(t as ReturnType<typeof setTimeout>),
+    });
+    if (!stillThisSession()) return;
+    if (readiness !== 'ready') {
+      this.pttFallback();
+      return;
+    }
+    try {
+      await native.pttJoin(this.channelTitle());
+    } catch {
+      if (stillThisSession()) this.pttFallback();
+      return;
+    }
+    // The token may already be known; it is registered once pttJoined lands.
+    const st = native.pttState();
+    if (st.token && !this.pttToken) {
+      this.pttToken = { token: st.token, environment: native.apnsEnvironment() };
+    }
+    this.clearJoinTimer();
+    if (this.ptt !== 'joining') return; // pttJoined / pttJoinFailed already landed
+    this.joinTimer = setTimeout(() => {
+      this.joinTimer = null;
+      // Neither pttJoined nor pttJoinFailed: treat as failed.
+      if (stillThisSession() && this.ptt === 'joining') {
+        void native.pttLeave().catch(() => {});
         this.pttFallback();
       }
-    } else {
-      this.ptt = native ? 'unavailable' : 'off';
-      this.notify();
-    }
+    }, PTT_JOIN_TIMEOUT_MS);
+  }
+
+  private clearJoinTimer() {
+    if (this.joinTimer) clearTimeout(this.joinTimer);
+    this.joinTimer = null;
   }
 
   /** Called by liveController when live ends for any reason. */
   async goOffline() {
     if (!this.live && this.ptt === 'off') return;
     this.live = false;
+    this.clearJoinTimer();
     this.dispatch({ type: 'RESET' });
     for (const id of [...this.incoming.keys()]) this.endIncoming(id, false);
     agora.leaveAll();
@@ -693,7 +753,9 @@ class VoiceController {
 
   private async registerToken() {
     const t = this.pttToken;
-    if (!this.live || !this.liveSessionId || !t || this.ptt === 'off' || this.registeredToken === t.token) return;
+    // Only for a channel the system confirmed: never while joining or after a
+    // failed initialization.
+    if (!this.live || !this.liveSessionId || !t || this.ptt !== 'ready' || this.registeredToken === t.token) return;
     try {
       await registerPttToken({
         installationId: await installationId(),

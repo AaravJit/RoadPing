@@ -61,14 +61,20 @@ export interface NativeEvents {
   pttIncoming: (e: PttIncomingPayload) => void;
   pttRemoteExpired: (e: { tx: string }) => void;
   pttError: (e: { op: string; error: string }) => void;
+  /** See src/services/live/locationFreshness.ts for how a tick is judged. */
   liveLocationTick: (e: {
     at: number;
+    /** Core Location fix timestamp (epoch ms); absent until the first fix. */
+    fixAt?: number;
+    ageMs?: number;
+    /** Present only when the fix is within native's age and accuracy bounds. */
     lat?: number;
     lng?: number;
     accuracy?: number;
-    ageMs?: number;
     heading?: number;
     speed?: number;
+    /** Why coordinates were withheld: no_fix | too_old | future | inaccurate. */
+    stale?: string;
   }) => void;
   liveLocationError: (e: { code: string }) => void;
   liveActivityError: (e: { error: string }) => void;

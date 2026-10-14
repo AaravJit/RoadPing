@@ -16,6 +16,7 @@ import {
   signProviderToken,
 } from '../_shared/apns.ts';
 import { mintVoiceToken, voiceTokenTtlSeconds } from '../_shared/agoraToken.ts';
+import { parseVoiceAccess, voiceAllowed } from '../_shared/voiceAccess.ts';
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(msg);
@@ -113,6 +114,9 @@ function deps(w: World, over: Partial<VoiceDeps> = {}): VoiceDeps {
     getAuthUser: () => Promise.resolve(w.user as User | null),
     createAdminClient: () => fakeAdmin(w),
     isRateLimited: () => Promise.resolve(w.limited),
+    // Most tests exercise the handler logic with the gate open; the access
+    // tests below run with the allowlist.
+    access: { mode: 'open' },
     agora: AGORA,
     apns: APNS,
     sendPush: (_cfg, target, payload) => {
@@ -317,6 +321,7 @@ Deno.test('ptt-token validates and binds to the caller', async () => {
     getAuthUser: () => Promise.resolve(w.user as User | null),
     createAdminClient: () => fakeAdmin(w),
     isRateLimited: () => Promise.resolve(false),
+    access: { mode: 'open' } as const,
   };
   const req = (b: unknown) => new Request('http://x', { method: 'POST', body: JSON.stringify(b) });
   const good = { action: 'register', installation_id: INST, live_session_id: SESSION, token: 'AB'.repeat(32),
@@ -331,6 +336,98 @@ Deno.test('ptt-token validates and binds to the caller', async () => {
   assertEquals((await handlePttToken(req(good), d)).status, 409, 'not live');
   const anon = { ...d, getAuthUser: () => Promise.resolve(null) };
   assertEquals((await handlePttToken(req(good), anon)).status, 401, 'auth');
+});
+
+// ── Voice access gate (test-account allowlist) ─────────────────────────────
+
+const TESTER = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const OUTSIDER = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+Deno.test('access config: allowlist is the default and fails closed on bad config', () => {
+  assertEquals(parseVoiceAccess(undefined, undefined), { mode: 'closed', reason: 'empty_allowlist' }, 'unset');
+  assertEquals(parseVoiceAccess('allowlist', ' , '), { mode: 'closed', reason: 'empty_allowlist' }, 'blank');
+  assertEquals(parseVoiceAccess(undefined, `${TESTER},not-a-uuid`), { mode: 'closed', reason: 'invalid_allowlist' },
+    'one bad entry closes it');
+  assertEquals(parseVoiceAccess('Open', TESTER), { mode: 'closed', reason: 'invalid_mode' }, 'mode is exact');
+  assertEquals(parseVoiceAccess('everyone', TESTER), { mode: 'closed', reason: 'invalid_mode' }, 'unknown mode');
+  assertEquals(parseVoiceAccess('open', undefined), { mode: 'open' }, 'explicit open');
+  const a = parseVoiceAccess(undefined, `${TESTER.toUpperCase()}\n ${OUTSIDER.slice(0, 35)}9`);
+  assert(a.mode === 'allowlist', 'parsed');
+  assert(voiceAllowed(a, TESTER), 'case-insensitive UUID match');
+  assert(!voiceAllowed(a, OUTSIDER), 'different id');
+  assert(!voiceAllowed(a, TESTER.slice(0, 35)), 'no prefix match');
+  assert(!voiceAllowed(a, `${TESTER} `), 'no padded match');
+  assert(!voiceAllowed({ mode: 'closed', reason: 'empty_allowlist' }, TESTER), 'closed denies everyone');
+});
+
+Deno.test('an account outside the allowlist cannot transmit, listen, set context or confirm', async () => {
+  const access = parseVoiceAccess('allowlist', TESTER);
+  for (const body of [
+    { action: 'begin', client_tx_id: CLIENT_TX },
+    { action: 'grant', transmission_id: TX },
+    { action: 'grant', voice_session_id: VS },
+    { action: 'context', room_id: null },
+    { action: 'confirm', transmission_id: TX },
+  ]) {
+    const w = world({ user: { id: OUTSIDER } });
+    const res = await call(w, body, { access });
+    assertEquals(res.status, 403, `${body.action} status`);
+    assertEquals(res.json?.error, 'voice_unavailable', `${body.action} code`);
+    assertEquals(w.calls.length, 0, `${body.action} reaches no RPC`);
+    assertEquals(w.background.length, 0, `${body.action} starts no fan-out`);
+  }
+});
+
+Deno.test('a misconfigured allowlist denies even a tester, independent of Agora config', async () => {
+  for (const access of [parseVoiceAccess(undefined, undefined), parseVoiceAccess(undefined, 'x')]) {
+    const w = world({ user: { id: TESTER } });
+    assertEquals((await call(w, { action: 'begin', client_tx_id: CLIENT_TX }, { access })).status, 403, 'begin');
+    assertEquals(w.calls.length, 0, 'no RPC');
+  }
+});
+
+Deno.test('an allowlisted account is served; cleanup works for everyone', async () => {
+  const access = parseVoiceAccess(undefined, TESTER);
+  const w = world({ user: { id: TESTER } });
+  assertEquals((await call(w, { action: 'begin', client_tx_id: CLIENT_TX }, { access })).status, 200, 'tester begins');
+  const out = world({ user: { id: OUTSIDER } });
+  assertEquals((await call(out, { action: 'end' }, { access })).status, 200, 'outsider can still end');
+  assertEquals(out.calls[0]?.fn, 'voice_end_transmission', 'end reached the database');
+  const closed = world({ user: { id: TESTER } });
+  assertEquals((await call(closed, { action: 'end' }, { access: parseVoiceAccess('bad', TESTER) })).status, 200,
+    'end works with a broken config');
+});
+
+Deno.test('fan-out never wakes a listener outside the allowlist', async () => {
+  const L1 = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const w = world();
+  const rows = w.rpc.voice_fanout_targets!({}).data as Record<string, unknown>[];
+  w.rpc.voice_fanout_targets = () => ({
+    data: [{ ...rows[0], listener_id: L1 }, { ...rows[1], listener_id: OUTSIDER }],
+    error: null,
+  });
+  const res = await fanOut(fakeAdmin(w), deps(w, { access: parseVoiceAccess(undefined, `${TESTER},${L1}`) }), TESTER, TX, null);
+  assertEquals(res, { sent: 1, dropped: 0, failed: 0 }, 'only the allowlisted listener');
+  assertEquals(w.pushes.length, 1, 'one push');
+});
+
+Deno.test('ptt-token: registration is gated, unregistering is not', async () => {
+  const w = world({ user: { id: OUTSIDER } });
+  const d = {
+    getAuthUser: () => Promise.resolve(w.user as User | null),
+    createAdminClient: () => fakeAdmin(w),
+    isRateLimited: () => Promise.resolve(false),
+    access: parseVoiceAccess(undefined, TESTER),
+  };
+  const req = (b: unknown) => new Request('http://x', { method: 'POST', body: JSON.stringify(b) });
+  const reg = { action: 'register', installation_id: INST, live_session_id: SESSION, token: 'AB'.repeat(32),
+                apns_environment: 'production' };
+  const res = await handlePttToken(req(reg), d);
+  assertEquals(res.status, 403, 'outsider cannot register');
+  assertEquals(w.calls.length, 0, 'no RPC');
+  assertEquals((await handlePttToken(req({ action: 'unregister' }), d)).status, 200, 'outsider can unregister');
+  w.user = { id: TESTER };
+  assertEquals((await handlePttToken(req(reg), d)).status, 200, 'tester registers');
 });
 
 // ── Shared helpers ────────────────────────────────────────────────────────

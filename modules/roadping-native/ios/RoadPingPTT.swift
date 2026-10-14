@@ -21,7 +21,7 @@ import PushToTalk
 ///    began first.
 ///  - Wired-headset and CarPlay play/pause toggles map to begin/end
 ///    transmission while a channel is active; accessory button events are
-///    enabled on join.
+///    enabled on join (iOS 17+, the API's availability).
 ///
 /// Cold launch policy: RoadPing never resumes a live session in a new process.
 /// A channel the system restores (didJoinChannel with .channelRestoration, or
@@ -306,7 +306,11 @@ extension RoadPingPTT: PTChannelManagerDelegate, PTChannelRestorationDelegate {
     }
     locked { joinedChannel = channelUUID }
     channelManager.setTransmissionMode(.halfDuplex, channelUUID: channelUUID, completionHandler: nil)
-    channelManager.setAccessoryButtonEventsEnabled(true, channelUUID: channelUUID, completionHandler: nil)
+    // Accessory (headset / CarPlay play-pause) button events are iOS 17+;
+    // on iOS 16 the channel works without them.
+    if #available(iOS 17.0, *) {
+      channelManager.setAccessoryButtonEventsEnabled(true, channelUUID: channelUUID, completionHandler: nil)
+    }
     channelManager.setServiceStatus(.ready, channelUUID: channelUUID, completionHandler: nil)
     RoadPingEvents.shared.emit("pttJoined")
   }

@@ -5,7 +5,8 @@
  * and the privacy contract, and docs/PHASE3_VOICE_PTT.md for the design.
  *
  * Secrets (names only): AGORA_APP_ID, AGORA_APP_CERTIFICATE (never sent to
- * clients), APNS_TEAM_ID, APNS_KEY_ID, APNS_PRIVATE_KEY, APNS_BUNDLE_ID.
+ * clients), APNS_TEAM_ID, APNS_KEY_ID, APNS_PRIVATE_KEY, APNS_BUNDLE_ID,
+ * VOICE_ACCESS_MODE, VOICE_ALLOWED_USER_IDS (see _shared/voiceAccess.ts).
  * Without the APNS_* secrets transmissions still work for listeners whose
  * app is open (they join from the Realtime speaking state); nobody is woken.
  */
@@ -15,6 +16,7 @@ import { getAuthUser } from '../_shared/auth.ts';
 import { isRateLimited } from '../_shared/rateLimit.ts';
 import { agoraConfigFromEnv } from '../_shared/agoraToken.ts';
 import { apnsConfigFromEnv, sendPttPush } from '../_shared/apns.ts';
+import { voiceAccessFromEnv } from '../_shared/voiceAccess.ts';
 import { handleVoiceTransmission } from './handler.ts';
 
 declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void } | undefined;
@@ -24,6 +26,7 @@ Deno.serve((req: Request) =>
     getAuthUser,
     createAdminClient,
     isRateLimited,
+    access: voiceAccessFromEnv(),
     agora: agoraConfigFromEnv(),
     apns: apnsConfigFromEnv(),
     sendPush: (cfg, target, payload) => sendPttPush(cfg, target, payload),

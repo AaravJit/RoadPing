@@ -29,6 +29,7 @@ import { RoadPingNative, addNativeListener, type LiveActivityState } from '../..
 import { HEARTBEAT_INTERVAL_MS, SESSION_EXPIRY_SECONDS, startLiveSession, stopLiveSession, updateLiveLocation } from '../liveSession';
 import { getCurrentCoords, getLocationPermissionStatus, requestLocationPermission, type Coords } from '../location';
 import { broadcastRangeFor } from '../units';
+import { evaluateFix, heartbeatHealth } from './locationFreshness';
 import { voiceController, type VoiceSnapshot } from '../voice/voiceController';
 
 export type LiveStatus = 'offline' | 'starting' | 'live' | 'stopping';
@@ -265,6 +266,13 @@ class LiveController {
       void (async () => {
         try {
           const fix = await getCurrentCoords();
+          // Same accuracy bound as native ticks (the fix itself is fresh).
+          const now = Date.now();
+          const verdict = evaluateFix({ at: now, fixAt: now, lat: fix.lat, lng: fix.lng, accuracy: fix.accuracyM }, now);
+          if (!verdict.ok) {
+            this.markHeartbeatFailure();
+            return;
+          }
           await this.heartbeat(fix);
         } catch {
           this.markHeartbeatFailure();
@@ -283,16 +291,20 @@ class LiveController {
     this.subs.push(
       addNativeListener('liveLocationTick', (e) => {
         if (this.s.status !== 'live') return;
-        if (typeof e.lat !== 'number' || typeof e.lng !== 'number') {
+        // Only a recent, accurate, real fix becomes a heartbeat; otherwise
+        // fail closed (no heartbeat) and let the session go stale.
+        const verdict = evaluateFix(e, Date.now());
+        if (!verdict.ok) {
           this.markHeartbeatFailure();
           return;
         }
+        const f = verdict.fix;
         void this.heartbeat({
-          lat: e.lat,
-          lng: e.lng,
-          ...(typeof e.accuracy === 'number' && e.accuracy > 0 ? { accuracyM: e.accuracy } : {}),
-          ...(typeof e.heading === 'number' ? { heading: e.heading } : {}),
-          ...(typeof e.speed === 'number' ? { speedMps: e.speed } : {}),
+          lat: f.lat,
+          lng: f.lng,
+          accuracyM: f.accuracyM,
+          ...(f.heading !== undefined ? { heading: f.heading } : {}),
+          ...(f.speedMps !== undefined ? { speedMps: f.speedMps } : {}),
         });
       }),
       addNativeListener('liveLocationError', () => {
@@ -360,16 +372,17 @@ class LiveController {
 
   private markHeartbeatFailure() {
     if (this.s.status !== 'live' || this.s.lastHeartbeatAt === null) return;
-    const since = Date.now() - this.s.lastHeartbeatAt;
-    // The server expires a session SESSION_EXPIRY_SECONDS after its last
-    // heartbeat; show "reconnecting" well before that.
-    if (!this.s.reconnecting && since > HEARTBEAT_INTERVAL_MS * 1.5) {
+    // The server expires a session SESSION_EXPIRY_SECONDS (+ grace) after its
+    // last heartbeat; show "reconnecting" well before that, and stop claiming
+    // to be live after a long outage (see locationFreshness.heartbeatHealth).
+    const health = heartbeatHealth(Date.now() - this.s.lastHeartbeatAt, HEARTBEAT_INTERVAL_MS, SESSION_EXPIRY_SECONDS);
+    if (health === 'expired') {
+      void this.endLocally('expired');
+      return;
+    }
+    if (health === 'reconnecting' && !this.s.reconnecting) {
       this.set({ reconnecting: true });
       this.refreshActivity();
-    }
-    if (since > SESSION_EXPIRY_SECONDS * 1000 * 8) {
-      // Long outage (several minutes): the server has ended it; stop pretending.
-      void this.endLocally('expired');
     }
   }
 

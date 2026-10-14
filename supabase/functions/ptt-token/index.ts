@@ -8,6 +8,9 @@
 import { createAdminClient } from '../_shared/client.ts';
 import { getAuthUser } from '../_shared/auth.ts';
 import { isRateLimited } from '../_shared/rateLimit.ts';
+import { voiceAccessFromEnv } from '../_shared/voiceAccess.ts';
 import { handlePttToken } from './handler.ts';
 
-Deno.serve((req: Request) => handlePttToken(req, { getAuthUser, createAdminClient, isRateLimited }));
+Deno.serve((req: Request) =>
+  handlePttToken(req, { getAuthUser, createAdminClient, isRateLimited, access: voiceAccessFromEnv() }),
+);

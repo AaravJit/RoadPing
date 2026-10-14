@@ -17,6 +17,10 @@
  *                                            → listener join or renewal; the
  *                                               server re-checks every time
  *
+ * Access: every action except `end` is refused with 403 voice_unavailable
+ * unless _shared/voiceAccess.ts admits the authenticated user (a test-account
+ * allowlist by default), whatever the client's kill switch says.
+ *
  * Privacy: responses and pushes carry no coordinates, distance or band. A
  * denied grant and a grant for a transmission that does not exist return the
  * same 403, so the endpoint cannot be used to probe who is talking.
@@ -29,11 +33,14 @@ import { isUUID } from '../_shared/validate.ts';
 import type { RateLimitBucket } from '../_shared/rateLimit.ts';
 import { type AgoraConfig, mintVoiceToken, voiceTokenTtlSeconds } from '../_shared/agoraToken.ts';
 import type { ApnsConfig, ApnsEnvironment, PushOutcome } from '../_shared/apns.ts';
+import { type VoiceAccess, voiceAllowed } from '../_shared/voiceAccess.ts';
 
 export interface VoiceDeps {
   getAuthUser: (req: Request) => Promise<User | null>;
   createAdminClient: () => SupabaseClient;
   isRateLimited: (admin: SupabaseClient, userId: string, bucket: RateLimitBucket) => Promise<boolean>;
+  /** Server-side voice gate (test-account allowlist), see voiceAccess.ts. */
+  access: VoiceAccess;
   agora: AgoraConfig | null;
   apns: ApnsConfig | null;
   sendPush: (
@@ -106,6 +113,9 @@ export async function handleVoiceTransmission(req: Request, deps: VoiceDeps): Pr
       }
       return ok({ ended: typeof data === 'number' ? data : 0 });
     }
+
+    // Everything past this point starts or extends voice: gated.
+    if (!voiceAllowed(deps.access, user.id)) return err(403, 'voice_unavailable');
 
     if (action === 'context') {
       const roomId = body.room_id ?? null;
@@ -257,7 +267,7 @@ interface FanoutRow {
  */
 export async function fanOut(
   admin: SupabaseClient,
-  deps: Pick<VoiceDeps, 'agora' | 'apns' | 'sendPush' | 'nowMs'>,
+  deps: Pick<VoiceDeps, 'access' | 'agora' | 'apns' | 'sendPush' | 'nowMs'>,
   speakerId: string,
   transmissionId: string,
   roomId: unknown,
@@ -276,7 +286,9 @@ export async function fanOut(
   const name = String((profile as { display_name?: string } | null)?.display_name ?? 'Driver').slice(0, 40);
   const now = deps.nowMs();
 
-  const queue = [...(rows as FanoutRow[])];
+  // Defense in depth: token registration is gated too, but a token stored
+  // before the allowlist changed must not be woken.
+  const queue = (rows as FanoutRow[]).filter((r) => voiceAllowed(deps.access, r.listener_id));
   const worker = async () => {
     for (let row = queue.shift(); row; row = queue.shift()) {
       const ttl = voiceTokenTtlSeconds(row.hard_end_at, now);

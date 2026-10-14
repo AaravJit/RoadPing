@@ -165,7 +165,26 @@ A listener whose push failed simply misses that press: no retries, no queue.
   `showsBackgroundLocationIndicator = true`, `pausesLocationUpdatesAutomatically
   = false`, `activityType = .automotiveNavigation`, 100 m accuracy, 50 m
   distance filter, plus `CLBackgroundActivitySession` on iOS 17+. A 12 s
-  native timer emits the latest fix (≤ 120 s old) for the heartbeat.
+  native timer emits a tick with the real fix's timestamp, age and accuracy.
+- Location freshness (`src/services/live/locationFreshness.ts`; the Swift
+  constants mirror it and a client test checks they match):
+  - A heartbeat carries only a real fix at most **45 s** old with horizontal
+    accuracy at most **300 m** (and no more than 5 s in the future). Anything
+    else skips the heartbeat (fail closed). The header shows "Reconnecting"
+    after 18 s without one, the server expires the session 25 s + 35 s grace
+    after the last one, and the client gives up after 200 s.
+  - The absence of updates is never treated as "the phone has not moved".
+    With a 50 m distance filter a parked phone gets no new fixes, so once the
+    last fix is older than **20 s** (or none has arrived, or it is too
+    inaccurate) the native side lifts the distance filter until a fresh,
+    accurate fix arrives, then restores 50 m. `requestLocation()` is not
+    usable here: Apple documents that it does nothing while location updates
+    are running. Battery: the location hardware already runs at the same
+    accuracy; only delivery changes, about one fix per refresh while parked.
+  - `kCLError.locationUnknown` is transient (ticks carry no coordinates
+    until a fix returns); `denied` or losing When In Use ends the session.
+  - Needs device verification: that iOS actually delivers a fix within a few
+    seconds of lifting the filter on a stationary phone (acceptance A1).
 - Why not expo-location's background API: it runs through expo-task-manager,
   whose task iOS relaunches after termination (conflicts with "never resume
   on cold launch"), and Expo pairs it with background (Always) permission.
@@ -186,12 +205,27 @@ A listener whose push failed simply misses that press: no retries, no queue.
   side sets `.playAndRecord` / `.voiceChat` / `[.allowBluetooth,
   .defaultToSpeaker]` at join; Agora is told
   `setAudioSessionOperationRestriction(All)` so it never reconfigures or
-  deactivates it. Agora joins only after `didActivate`.
+  deactivates it, and that restriction is applied right after
+  `initialize()` and before `enableAudio()` (`voice/agoraAudioSetup.ts`), so
+  the audio module never touches the session first. Agora joins only after
+  `didActivate`. Whether Agora then records and plays inside the
+  system-owned session is unverified until the device test.
 - `direct` mode: Agora manages the session with
   `setDefaultAudioRouteToSpeakerphone(true)` — the loudspeaker is the default
   only, so Bluetooth, CarPlay and wired routes take over when present. The old
   `setEnableSpeakerphone(true)` forced the built-in speaker even with CarPlay
   connected; it is removed.
+- A listener connection is always audience role with
+  `publishMicrophoneTrack: false` (one shared builder, client-tested), so
+  connecting Bluetooth or CarPlay can never start a transmission on its own.
+  Only a press (app button, system PTT UI, or a headset/CarPlay button press
+  while a channel is active, iOS 17+) transmits.
+- PushToTalk start-up: Go Live waits up to 3 s for the native channel
+  manager, then joins; a join that neither succeeds nor fails within 10 s is
+  left and treated as failed. Any failure shows "Voice works only with
+  RoadPing open" and keeps foreground voice; PushToTalk is reported active
+  (and its token registered) only after the system confirms the join. If
+  PushToTalk becomes ready later while the app is open, it joins then.
 - Audio scenario `Chatroom` (designed for frequent mic on/off).
 - An interruption mid-press (call, Siri) releases the press as
   `interrupted` and tells the server.
@@ -263,30 +297,72 @@ Notifications** on the App ID; register the `.liveactivity` extension App ID
   `APNS_PRIVATE_KEY` (the .p8 PEM), `APNS_BUNDLE_ID`; optional
   `AGORA_CUSTOMER_ID`, `AGORA_CUSTOMER_SECRET` (RESTful API credentials for
   immediate kicks after a block).
+- Voice access gate (`_shared/voiceAccess.ts`), enforced server-side for
+  `voice-transmission` (context, begin, confirm, grant, push fan-out) and
+  `ptt-token` (register), independent of the app's kill switch:
+  - `VOICE_ACCESS_MODE`: `allowlist` (also the default when unset) or
+    `open`. `open` is only for a later, separately approved rollout.
+  - `VOICE_ALLOWED_USER_IDS`: comma-separated auth user UUIDs, matched
+    exactly against the authenticated user id.
+  - Fails closed: unset, empty or any invalid entry, or an unknown mode,
+    denies everyone with `403 voice_unavailable`. Ending a transmission and
+    unregistering a token are never gated.
 - Agora Console: enable **co-host authentication** on the project so the
   subscriber role in listener tokens is enforced (otherwise any valid token
   may publish; see residual risks).
 
-## 10. Voice-test TestFlight deployment order
+## 10. Voice-test build against a staging backend (not yet set up)
 
-Aarav runs every step; nothing here was executed.
+Decision (Aarav, 2026-10-14): the first native voice test uses a **separate
+staging Supabase project**, never production. Nothing below has been done;
+it is the next separately approved task. Claude does not create projects,
+deploy, build or set secrets.
 
-1. Apple portal: Push to Talk + Push Notifications on the App ID; APNs key;
-   `.liveactivity` App ID.
-2. Agora Console: co-host authentication on.
-3. `eas build -p ios --profile voice-test` (kill switch off for this build
-   only via `eas.json` env; production env untouched). First build registers
-   the extension and regenerates profiles.
-4. `supabase db push` (applies 013 only).
-5. Set the secrets above (`supabase secrets set …`) on the target project.
-6. Deploy functions individually, in order: `voice-transmission`,
-   `ptt-token`, `stop-live-session`, `delete-account`, `block-user`; then
-   `create-agora-token` (retired) last. Never a blanket deploy.
-7. `eas submit -p ios --profile voice-test`; TestFlight internal testers only.
-8. Run the two-iPhone plan below.
+What Aarav sets up (accounts and credentials):
 
-Production keeps `EXPO_PUBLIC_DISABLE_AGORA=true` and gets no PushToTalk
-entitlement until a separate decision.
+1. **Supabase staging project**, new and empty. No production data is
+   copied. Record its project ref, URL and anon key.
+2. **Schema from version control**: `supabase link --project-ref <staging>`
+   then `supabase db push`, which applies every migration in
+   `supabase/migrations/` in order (including 013). Enable the extensions the
+   migrations expect (PostGIS, pg_cron) first.
+3. **Auth** on staging: the sign-in providers the app uses (Apple),
+   configured for staging; two test accounts created by signing in on the
+   test phones. Their auth user ids become the allowlist.
+4. **Staging secrets** (`supabase secrets set --project-ref <staging>`):
+   `AGORA_APP_ID`, `AGORA_APP_CERTIFICATE` (a separate Agora test project is
+   preferable), `APNS_TEAM_ID`, `APNS_KEY_ID`, `APNS_PRIVATE_KEY`,
+   `APNS_BUNDLE_ID`, `VOICE_ACCESS_MODE=allowlist`,
+   `VOICE_ALLOWED_USER_IDS=<two ids>`, optionally `AGORA_CUSTOMER_ID` /
+   `AGORA_CUSTOMER_SECRET`, plus what the existing functions read
+   (`PROJECT_URL`, `SERVICE_ROLE_KEY`) with staging values.
+5. **Edge Functions on staging only**, each named with
+   `--project-ref <staging>`: the existing ones the app calls plus
+   `voice-transmission` and `ptt-token`. Never a blanket deploy; never
+   against production.
+6. **EAS**: a dedicated environment for `voice-test` (or, if custom EAS
+   environments are not available on the plan, `env` values in the
+   `voice-test` profile) holding the staging `EXPO_PUBLIC_SUPABASE_URL` and
+   `EXPO_PUBLIC_SUPABASE_ANON_KEY` (public client values). The `preview` and
+   `production` environments stay unchanged. `eas.json` still points
+   `voice-test` at `preview` today and must be changed in that task, before
+   any build.
+7. **Apple / Agora**: Push to Talk on the App ID, an APNs key, the
+   `.liveactivity` App ID (EAS can create it on an interactive first build),
+   and Agora co-host authentication.
+
+Separation checks before any deploy or build is proposed:
+- every Supabase command names the staging ref, never production
+  `govebqdalfcoiyovsdth`;
+- the `voice-test` build configuration resolves to the staging URL and
+  `EXPO_PUBLIC_DISABLE_AGORA=false`, while `preview` / `production` still
+  resolve to production with the kill switch on;
+- production's secret list (names only) is unchanged.
+
+Then `eas build -p ios --profile voice-test` (interactive), `eas submit` to
+internal TestFlight only, and the two-iPhone plan. A failed voice-test build
+changes nothing for production: different channel, the kill switch stays on
+in production, and production builds get no PushToTalk entitlement.
 
 ## 11. Physical two-iPhone test plan
 
@@ -314,6 +390,19 @@ Phones A and B, two accounts, both on the voice-test build, both live within
 | 17 | Phone call during a press | Press ends as interrupted; no stuck "Talking" anywhere |
 | 18 | Sign out while live | Session, PTT channel, token and Live Activity all gone |
 | 19 | Battery: 30 min live, locked, 5 presses | Note battery % used on both phones |
+
+Additional acceptance scenarios (native validation, 2026-10-14). Vehicle
+tests are parked or passenger-operated; the driver never handles a phone
+while moving.
+
+| # | Steps | Pass when |
+|---|---|---|
+| A1 | B parked, locked, untouched for 12 minutes while live | B is live throughout; A sees B the whole time; server shows heartbeats at least every ~25 s |
+| A2 | B live with no usable fix (deep garage, or poor signal) | B shows "Reconnecting", then goes offline; A never sees B on a stale position; no heartbeat carries a fix older than 45 s |
+| A3 | Connect and disconnect Bluetooth and (parked) CarPlay on B while live, pressing nothing | No transmission starts on either phone; no new transmission rows on the server |
+| A4 | Go Live within a second of a cold launch; repeat where PushToTalk cannot start | PTT joins once ready, or B shows "Voice works only with RoadPing open" and voice works in the foreground; PTT is never shown active without the system channel |
+| A5 | From a non-allowlisted account, call `voice-transmission` begin / grant / context and `ptt-token` register directly with its own JWT | Every call returns 403 `voice_unavailable`; `end` and `unregister` still succeed |
+| A6 | Production app on a third phone during the test, including after a deliberately failed voice-test build | Production app behaves as before: no PTT UI, no Agora, production backend untouched |
 
 Server checks after the run (read-only SQL): no `private.voice_transmissions`
 row left open, no `private.ptt_push_tokens` row for ended sessions.
@@ -357,7 +446,12 @@ row left open, no `private.ptt_push_tokens` row for ended sessions.
 - Push delivery is best effort; a missed push means a missed press.
 - The 12 s background heartbeat costs battery; consider adaptive cadence.
 - PushToTalk, Live Activity, background location and CarPlay behaviour are
-  untested on hardware in this change (no Mac / device here).
+  untested on hardware in this change (no Mac / device here). The Swift has
+  never been compiled; B1 fixed the one availability error found by review,
+  others may surface on the first build.
+- The stationary refresh relies on iOS delivering a fix after the distance
+  filter is lifted; if it does not, a parked session fails closed (ends)
+  rather than reporting a stale position.
 - `aps-environment` is `development` in the generated entitlements; App
   Store / TestFlight export re-signs with the profile's value (as with
   expo-notifications). Verify on the first voice-test build.
@@ -374,6 +468,8 @@ row left open, no `private.ptt_push_tokens` row for ended sessions.
 - Sending notification requests to APNs — https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns
 - Establishing a token-based connection to APNs — https://developer.apple.com/documentation/usernotifications/establishing-a-token-based-connection-to-apns
 - Handling notification responses from APNs — https://developer.apple.com/documentation/usernotifications/handling-notification-responses-from-apns
+- requestLocation() (does nothing while updates are running) — https://developer.apple.com/documentation/corelocation/cllocationmanager/requestlocation()
+- setAccessoryButtonEventsEnabled (iOS 17.0+) — https://developer.apple.com/documentation/pushtotalk/ptchannelmanager/setaccessorybuttoneventsenabled(_:channeluuid:completionhandler:)
 - Handling location updates in the background — https://developer.apple.com/documentation/corelocation/handling-location-updates-in-the-background
 - allowsBackgroundLocationUpdates — https://developer.apple.com/documentation/corelocation/cllocationmanager/allowsbackgroundlocationupdates
 - CLBackgroundActivitySession — https://developer.apple.com/documentation/corelocation/clbackgroundactivitysession-3mzv3
