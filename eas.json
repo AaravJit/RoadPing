@@ -21,6 +21,18 @@
         "resourceClass": "m-medium"
       }
     },
+    "voice-test": {
+      "distribution": "store",
+      "channel": "voice-test",
+      "environment": "preview",
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_DISABLE_AGORA": "false"
+      },
+      "ios": {
+        "resourceClass": "m-medium"
+      }
+    },
     "production": {
       "distribution": "store",
       "channel": "production",
@@ -40,6 +52,13 @@
       }
     },
     "production": {
+      "ios": {
+        "appleId": "aaravjit16@gmail.com",
+        "ascAppId": "6766147039",
+        "appleTeamId": "ZVZUU5WLZ8"
+      }
+    },
+    "voice-test": {
       "ios": {
         "appleId": "aaravjit16@gmail.com",
         "ascAppId": "6766147039",

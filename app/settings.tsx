@@ -25,7 +25,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useUnits } from '@/hooks/useUnits';
 import { useVehicles } from '@/hooks/useVehicles';
-import { stopLiveSession } from '@/services/liveSession';
+import { liveController } from '@/services/live/liveController';
 import { updateProfile } from '@/services/profile';
 import { DEFAULT_RANGE_M, type UnitSystem } from '@/services/units';
 import { makeStyles } from '@/theme/ThemeProvider';
@@ -72,6 +72,7 @@ export default function SettingsScreen() {
     setSaving(true);
     try {
       await updateProfile(user.id, { dnd_mode: value });
+      liveController.setDnd(value);
       await refreshProfile();
     } catch {
       setDndMode(!value);
@@ -105,12 +106,7 @@ export default function SettingsScreen() {
         onPress: () => {
           void (async () => {
             setSigningOut(true);
-            try {
-              // Best-effort: end server session before clearing local auth.
-              await stopLiveSession();
-            } catch {
-              // Session may already be ended — proceed regardless.
-            }
+            // signOut() ends live first (server session, voice, Live Activity).
             try {
               await signOut();
               router.replace('/onboarding');
@@ -159,7 +155,7 @@ export default function SettingsScreen() {
 
       <ListSection
         header="Drive"
-        footer="RoadPing only shares your location while you're live with the app open. Leaving the app ends your live session."
+        footer="RoadPing shares your location only while you're live, including with the app in the background, until you end it. It never goes live on its own."
       >
         <View style={styles.block}>
           <RangeSelector
@@ -180,13 +176,13 @@ export default function SettingsScreen() {
 
       <ListSection
         header="Voice"
-        footer="Talking is hold-to-talk only. RoadPing doesn't record your conversations."
+        footer="Talking is push to talk only, from the app, the Lock Screen, a headset button or CarPlay. RoadPing doesn't record your conversations."
       >
         <ListSwitchRow
           icon="moon.fill"
           iconTone="neutral"
           title="Do Not Disturb"
-          subtitle="Hide your talking status from nearby drivers"
+          subtitle="Pause incoming voice. You stay visible and can still talk."
           value={dndMode}
           onValueChange={(v) => void handleToggleDnd(v)}
           disabled={saving}

@@ -19,8 +19,8 @@
       },
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSLocationWhenInUseUsageDescription": "RoadPing uses your location while active to show nearby live drivers and let them see you're nearby after you tap Go Live. Your exact coordinates are never shared and no location history is stored.",
-        "NSMicrophoneUsageDescription": "RoadPing uses your microphone when you hold to talk to nearby drivers or room members. Voice is live only and not recorded or stored.",
+        "NSLocationWhenInUseUsageDescription": "RoadPing uses your location while you are live, including when RoadPing is in the background or your screen is locked, to show nearby live drivers and let them see you're nearby. You choose when to go live and can stop anytime. Your exact coordinates are never shared and no location history is stored.",
+        "NSMicrophoneUsageDescription": "RoadPing uses your microphone only while you hold to talk, or press talk on your headset or car, to reach nearby drivers or room members. Voice is live only and never recorded or stored.",
         "NSCameraUsageDescription": "RoadPing uses your camera only when you choose to take a profile photo. RoadPing does not record video.",
         "NSPhotoLibraryUsageDescription": "RoadPing accesses your photo library only when you choose a profile photo. RoadPing never browses or uploads anything else."
       },
@@ -28,14 +28,17 @@
         "light": "./assets/icon.png",
         "dark": "./assets/icon-dark.png",
         "tinted": "./assets/icon-tinted.png"
-      }
+      },
+      "appleTeamId": "ZVZUU5WLZ8"
     },
     "plugins": [
       "expo-router",
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "RoadPing uses your location while active to show nearby live drivers and let them see you're nearby after you tap Go Live.",
+          "locationWhenInUsePermission": "RoadPing uses your location while you are live, including when RoadPing is in the background or your screen is locked, to show nearby live drivers and let them see you're nearby. You choose when to go live and can stop anytime. Your exact coordinates are never shared and no location history is stored.",
+          "locationAlwaysAndWhenInUsePermission": "RoadPing never needs Always access. It uses While Using permission, and only while you are live.",
+          "locationAlwaysPermission": "RoadPing never needs Always access. It uses While Using permission, and only while you are live.",
           "isIosBackgroundLocationEnabled": false
         }
       ],
@@ -43,7 +46,7 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "RoadPing uses your microphone when you hold to talk to nearby drivers or room members. Voice is live only and not recorded or stored."
+          "microphonePermission": "RoadPing uses your microphone only while you hold to talk, or press talk on your headset or car, to reach nearby drivers or room members. Voice is live only and never recorded or stored."
         }
       ],
       "expo-asset",
@@ -60,7 +63,9 @@
             "backgroundColor": "#0B0B0C"
           }
         }
-      ]
+      ],
+      "./plugins/withRoadPingNative",
+      "@bacons/apple-targets"
     ],
     "experiments": {
       "typedRoutes": true

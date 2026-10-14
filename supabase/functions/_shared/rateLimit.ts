@@ -11,6 +11,12 @@ export const RATE_LIMITS = {
   startVoice: { limit: 60, windowSeconds: 60 },
   agoraToken: { limit: 30, windowSeconds: 600 },
   report: { limit: 20, windowSeconds: 3600 },
+  // Phase 3 voice. A press is begin + confirm + end (+ one speaker renewal);
+  // a listener needs one grant per incoming press plus at most two renewals.
+  voiceBegin: { limit: 60, windowSeconds: 60 },
+  voiceGrant: { limit: 180, windowSeconds: 60 },
+  voiceContext: { limit: 30, windowSeconds: 60 },
+  pttRegister: { limit: 30, windowSeconds: 600 },
 } as const;
 
 export type RateLimitBucket = keyof typeof RATE_LIMITS;

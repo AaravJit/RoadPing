@@ -1,41 +1,19 @@
 /**
- * VoiceService — speaking-state management for RoadPing hold-to-talk.
+ * VoiceService — microphone permission, the speaking indicator, and the
+ * indicator-only fallback.
  *
- * ┌─────────────────────────────────────────────────────────────────────────┐
- * │  EXPO GO MODE  (what runs today)                                        │
- * │                                                                         │
- * │  • requestMicPermission() — calls expo-audio                            │
- * │    requestRecordingPermissionsAsync(). The OS mic-permission dialog is  │
- * │    shown correctly in Expo Go.                                          │
- * │  • startTalking() / stopTalking() — call the start/stop-voice-session   │
- * │    Edge Functions. This sets is_speaking = true/false in voice_sessions.│
- * │  • subscribeToSpeakingState() — Supabase Realtime subscription.         │
- * │    Nearby users see the speaking indicator update in ~1 s.              │
- * │                                                                         │
- * │  NO AUDIO IS CAPTURED OR TRANSMITTED. The "talking" signal is a        │
- * │  presence flag only — like a CB radio squelch light, not audio.        │
- * │  No recordings. No transcripts. No audio files.                         │
- * ├─────────────────────────────────────────────────────────────────────────┤
- * │  PHASE 15 — REAL AUDIO via AGORA (EAS / TestFlight builds)              │
- * │                                                                         │
- * │  Real audio transport uses Agora (react-native-agora), a native module  │
- * │  that does NOT run in Expo Go — an EAS development build is required.    │
- * │                                                                         │
- * │  • createAgoraToken() — calls the create-agora-token Edge Function,     │
- * │    which mints a short-lived RTC token after verifying the live session │
- * │    (nearby) or room membership (room). The App Certificate stays server-│
- * │    side; only appId/channel/token/uid reach the client.                 │
- * │  • src/services/agoraVoice.ts owns the engine: join/leave/mute. PTT      │
- * │    unmutes the mic while held; release re-mutes.                        │
- * │                                                                         │
- * │  Honest status (see Phase 15 notes / docs):                             │
- * │    • ROOM voice  → real grouped audio: all members share one channel.   │
- * │    • NEARBY voice → speaking-indicator only. Real geo-grouped nearby     │
- * │      audio needs server-side channel assignment and is deferred; the    │
- * │      token endpoint supports it but the client does not join yet.       │
- * │                                                                         │
- * │  Either way: NO recordings, NO files, NO transcripts, NO uploads.       │
- * └─────────────────────────────────────────────────────────────────────────┘
+ * Real audio (Phase 3) lives in src/services/voice/: voiceController owns
+ * talking and hearing, the server authorizes every press and every listener,
+ * and src/services/agoraVoice.ts carries the audio. This file keeps:
+ *
+ *  • Microphone permission (expo-audio).
+ *  • startTalking() / stopTalking(): the start/stop-voice-session status
+ *    calls used ONLY in indicator mode (Expo Go, or the Agora kill switch),
+ *    where no audio is captured and "talking" is a status light.
+ *  • subscribeToSpeakingState(): Realtime speaking indicators for Nearby and
+ *    room lists.
+ *
+ * NO recordings, NO files, NO transcripts, NO uploads.
  */
 import {
   getRecordingPermissionsAsync,
@@ -44,8 +22,6 @@ import {
 import { supabase } from './supabase';
 import { edgeFnUrl } from './api';
 import type {
-  CreateAgoraTokenRequest,
-  CreateAgoraTokenResponse,
   StartVoiceSessionRequest,
   StartVoiceSessionResponse,
   StopVoiceSessionResponse,
@@ -65,8 +41,6 @@ export type SpeakingChange = {
   is_speaking: boolean;
 };
 
-/** Maximum continuous hold duration — matches voice_sessions.expires_at (60 s). */
-export const MAX_HOLD_MS = 60_000;
 
 // ─── Module-level state ───────────────────────────────────────────────────────
 
@@ -124,24 +98,6 @@ export async function requestMicPermission(): Promise<MicPermissionStatus> {
   const { status } = await requestRecordingPermissionsAsync();
   _micPermissionStatus = status as MicPermissionStatus;
   return _micPermissionStatus;
-}
-
-// ─── Agora RTC token ──────────────────────────────────────────────────────────
-
-/**
- * Requests a short-lived Agora RTC token for the given voice target.
- *
- * The server verifies the caller owns an active live session (nearby) or is a
- * room member (room) before minting. Throws on auth/permission/server errors —
- * callers should fall back to indicator-only behavior.
- */
-export async function createAgoraToken(
-  req: CreateAgoraTokenRequest,
-): Promise<CreateAgoraTokenResponse> {
-  return post<CreateAgoraTokenRequest, CreateAgoraTokenResponse>(
-    'create-agora-token',
-    req,
-  );
 }
 
 // ─── Speaking state ───────────────────────────────────────────────────────────
@@ -250,9 +206,3 @@ export function subscribeToSpeakingState(
     void supabase.removeChannel(channel);
   };
 }
-
-// ─── Backward-compatible aliases (used by useHoldToTalk) ─────────────────────
-// These keep the hook import unchanged while the new API surface is available.
-
-export const startVoice = startTalking;
-export const stopVoice = stopTalking;

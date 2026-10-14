@@ -10,7 +10,7 @@
  * Live:
  *   [ ■ End ]      [ ◎ 3 mi ] [ ☾ DND ]
  *   [ Nearby 3 ]   (  HOLD TO TALK  )   [ Rooms ]
- *   Nearby channel · talk status only
+ *   Nearby · voice on (or a degraded / listening state)
  *
  * The End control never ends the session on its own: the screen confirms
  * through an action sheet, so a stray tap while driving can't drop you.
@@ -218,7 +218,8 @@ interface LiveProps extends CommonProps {
     disabled: boolean;
     onPressIn: () => void;
     onPressOut: () => void;
-    audioConnected: boolean;
+    /** One line under the button: the voice context and its state. */
+    footer: string;
   };
 }
 
@@ -236,7 +237,7 @@ export function VoiceDock(props: VoiceDockProps) {
       disabled={dndBusy}
       onPress={() => onToggleDnd(!dnd)}
       accessibilityLabel="Do Not Disturb"
-      accessibilityHint="Hides your talking status from nearby drivers and mutes room audio"
+      accessibilityHint="Pauses incoming voice. You stay visible and can still talk."
     />
   );
 
@@ -281,7 +282,7 @@ export function VoiceDock(props: VoiceDockProps) {
           loading={props.starting}
           disabled={props.goLiveDisabled}
           onPress={props.onGoLive}
-          accessibilityHint="Lets nearby live drivers see you, with a broad distance range only, while RoadPing is open"
+          accessibilityHint="Lets nearby live drivers see you, with a broad distance range only, until you end it"
           style={styles.goLive}
         />
         <AppText variant="footnote" color="secondary" align="center" maxScale={DRIVE_CHROME_MAX_SCALE}>
@@ -343,9 +344,7 @@ export function VoiceDock(props: VoiceDockProps) {
         align="center"
         maxScale={DRIVE_CHROME_MAX_SCALE}
       >
-        {ptt.audioConnected
-          ? 'Nearby channel · audio on'
-          : 'Nearby channel · drivers see when you talk'}
+        {ptt.footer}
       </AppText>
     </GlassSurface>
   );

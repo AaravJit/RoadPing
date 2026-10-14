@@ -13,6 +13,7 @@ import { edgeFnUrl } from './api';
 import type {
   StartSessionRequest,
   StartSessionResponse,
+  StopSessionRequest,
   StopSessionResponse,
   UpdateLocationRequest,
   UpdateLocationResponse,
@@ -62,8 +63,15 @@ export async function startLiveSession(
   );
 }
 
-export async function stopLiveSession(): Promise<StopSessionResponse> {
-  return post<Record<string, never>, StopSessionResponse>('stop-live-session', {});
+/**
+ * Ends the live session. session_id limits it to that session (cold-launch
+ * cleanup must not end a session started since on another device); reason is
+ * recorded server-side.
+ */
+export async function stopLiveSession(
+  req: StopSessionRequest = {},
+): Promise<StopSessionResponse> {
+  return post<StopSessionRequest, StopSessionResponse>('stop-live-session', req);
 }
 
 export async function updateLiveLocation(

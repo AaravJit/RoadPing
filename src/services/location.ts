@@ -1,8 +1,11 @@
 /**
- * Location service — foreground GPS, Phase 7.
+ * Location service — When In Use permission and one-off fixes.
  *
  * Privacy rules upheld here:
- *  - Only foreground permission is requested. Background is never requested.
+ *  - Only When In Use permission is requested. Always is never requested.
+ *    Background updates while live come from the native module's own
+ *    location manager (modules/roadping-native, Phase 3), which iOS allows
+ *    under When In Use for a session started in the foreground.
  *  - Exact coordinates never appear in UI — callers pass them straight to
  *    Edge Functions (start-live-session, update-live-location) and to the
  *    NearbyMap component (which uses them only for map centering, not display).

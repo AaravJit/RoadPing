@@ -55,7 +55,13 @@ export interface StartSessionResponse {
 
 // ─── stop-live-session ────────────────────────────────────────────────────────
 
-// No request body needed — user identity comes from the JWT.
+// User identity comes from the JWT. Both fields are optional (Phase 3).
+export interface StopSessionRequest {
+  /** Only end this session (cold-launch cleanup). */
+  session_id?: string;
+  reason?: 'user_stopped' | 'app_background' | 'logout';
+}
+
 export interface StopSessionResponse {
   success: true;
 }
@@ -199,29 +205,9 @@ export interface StopVoiceSessionResponse {
   success: true;
 }
 
-// ─── create-agora-token ──────────────────────────────────────────────────────
-
-export interface CreateAgoraTokenRequest {
-  /** "room" → shared room channel; "nearby" → caller's live-session channel. */
-  target: 'nearby' | 'room';
-  /** Required when target === "nearby": the caller's active live_session.id. */
-  session_id?: string;
-  /** Required when target === "room": the room to join. */
-  room_id?: string;
-}
-
-export interface CreateAgoraTokenResponse {
-  /** Agora App ID — public, safe on the client. */
-  appId: string;
-  /** Channel to join. Both peers must use the same name to hear each other. */
-  channelName: string;
-  /** Short-lived RTC token authorizing this uid on this channel. */
-  token: string;
-  /** Deterministic 32-bit uid for this user (stable across joins). */
-  uid: number;
-  /** ISO 8601 — token/privilege expiry. Re-request before this time. */
-  expiresAt: string;
-}
+// ─── voice-transmission / ptt-token (Phase 3) ────────────────────────────────
+// Typed in src/services/voice/voiceApi.ts. create-agora-token is retired: it
+// answers 410 so builds that still call it show voice as unavailable.
 
 // ─── expire-stale-sessions (admin/cron only) ─────────────────────────────────
 

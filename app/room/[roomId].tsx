@@ -5,6 +5,9 @@
  * an invite code to share, and a Hold-to-Talk button.
  *
  * PTT requires the user to have an active live session (started from Drive).
+ * While this screen is focused the driver's ONE voice context is this room
+ * (voiceController.setContext): presses go to room members only, and
+ * Nearby voice pauses until they leave. Leaving the screen returns to Nearby.
  * Members are polled every 3 s for speaking state changes.
  *
  * Rules upheld:
@@ -15,7 +18,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActionSheetIOS, Alert, Linking, Platform, Pressable, ScrollView, Share, View } from 'react-native';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EmptyState } from '@/components/EmptyState';
@@ -37,11 +40,12 @@ import {
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useHoldToTalk } from '@/hooks/useHoldToTalk';
+import { useLiveSession } from '@/hooks/useLiveSession';
 import { blockUser } from '@/services/moderation';
-import { getRoomMembers, leaveRoom, deleteRoom, getActiveLiveSessionId } from '@/services/rooms';
+import { getRoomMembers, leaveRoom, deleteRoom } from '@/services/rooms';
 import { supabase } from '@/services/supabase';
 import { subscribeToSpeakingState } from '@/services/voice';
-import { agoraUidForUser, setRemoteSpeakingListener } from '@/services/agoraVoice';
+import { voiceController } from '@/services/voice/voiceController';
 import type { RoomMember } from '@/services/api';
 import type { RoomRow } from '@/services/types';
 import { makeStyles, useTheme } from '@/theme/ThemeProvider';
@@ -70,20 +74,19 @@ export default function RoomScreen() {
   const [membersLoading, setMembersLoading] = useState(true);
   const [membersError, setMembersError] = useState<string | null>(null);
 
-  // ── PTT: active live session ───────────────────────────────────────────────
-  const [liveSessionId, setLiveSessionId] = useState<string | null>(null);
+  // ── PTT: the live session (started from Drive) ───────────────────────────
+  const live = useLiveSession({
+    initialRangeM: 0,
+    userId: user?.id ?? null,
+    dnd: profile?.dnd_mode ?? false,
+  });
+  const liveSessionId = live.status === 'live' ? live.sessionId : null;
 
   // ── UI ─────────────────────────────────────────────────────────────────────
   const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
   const [leaving, setLeaving] = useState(false);
 
-  // user_ids currently producing audio, per Agora's volume callback (native
-  // builds only). Self-clearing: each callback reports the full speaking set.
-  const [agoraSpeaking, setAgoraSpeaking] = useState<Set<string>>(new Set());
-
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const membersRef = useRef<RoomMember[]>([]);
-  membersRef.current = members;
 
   // ── Fetch room details ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -109,13 +112,17 @@ export default function RoomScreen() {
     })();
   }, [roomId]);
 
-  // ── Fetch active live session for PTT ──────────────────────────────────────
-  useEffect(() => {
-    void (async () => {
-      const id = await getActiveLiveSessionId();
-      setLiveSessionId(id);
-    })();
-  }, []);
+  // ── One voice context: this room while focused, Nearby otherwise ─────────
+  const roomName = room?.name ?? 'Room';
+  useFocusEffect(
+    useCallback(() => {
+      if (!roomId) return undefined;
+      void voiceController.setContext(roomId, roomName);
+      return () => {
+        void voiceController.setContext(null, 'Nearby');
+      };
+    }, [roomId, roomName]),
+  );
 
   // ── Load members + start polling ───────────────────────────────────────────
   const fetchMembers = useCallback(async () => {
@@ -141,6 +148,12 @@ export default function RoomScreen() {
     };
   }, [fetchMembers]);
 
+  // Names for the system PushToTalk UI when a member talks.
+  useEffect(() => {
+    const byId = new Map(members.map((m) => [m.user_id, personName(m)]));
+    voiceController.setNameResolver((id) => byId.get(id) ?? null);
+  }, [members]);
+
   // Realtime: fast-forward is_speaking between the 3 s poll cycles.
   useEffect(() => {
     if (!roomId) return;
@@ -156,25 +169,15 @@ export default function RoomScreen() {
     return unsub;
   }, [roomId]);
 
-  // Map Agora remote-speaking uids → member user_ids for fast indicators.
-  useEffect(() => {
-    const unsub = setRemoteSpeakingListener((uids) => {
-      const set = new Set<string>();
-      for (const m of membersRef.current) {
-        if (uids.includes(agoraUidForUser(m.user_id))) set.add(m.user_id);
-      }
-      setAgoraSpeaking(set);
-    });
-    return unsub;
-  }, []);
-
   // ── Hold-to-Talk ───────────────────────────────────────────────────────────
   const ptt = useHoldToTalk({
     liveSessionId,
     enabled: liveSessionId !== null,
-    roomId,
-    dnd: profile?.dnd_mode ?? false,
   });
+  // Members whose voice is playing here right now (server-authorized).
+  const hearing = new Set(
+    ptt.voice.incoming.filter((i) => i.status === 'playing' && i.speakerId !== null).map((i) => i.speakerId!),
+  );
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -397,7 +400,7 @@ export default function RoomScreen() {
         ) : (
           <ListSection header={memberCountLabel}>
             {members.map((raw) => {
-              const m = agoraSpeaking.has(raw.user_id) ? { ...raw, is_speaking: true } : raw;
+              const m = hearing.has(raw.user_id) ? { ...raw, is_speaking: true } : raw;
               const self = m.user_id === user?.id;
               const name = personName(m);
               const vehicle = `${vehicleEmoji(m.vehicle_type)} ${vehicleDescription(m)}`;
@@ -470,9 +473,13 @@ export default function RoomScreen() {
                 color={ptt.voiceConnected ? colors.success : colors.textSecondary}
               />
               <AppText variant="footnote" color="secondary">
-                {ptt.voiceConnected
-                  ? 'Room audio connected'
-                  : "Talk status only. Audio isn't available right now."}
+                {ptt.voice.issue === 'not_member'
+                  ? "You're no longer a member of this room."
+                  : profile?.dnd_mode
+                    ? 'Do Not Disturb: incoming voice paused'
+                    : ptt.voiceConnected
+                      ? 'Room voice on. Only members hear you.'
+                      : "Talk status only. Audio isn't available right now."}
               </AppText>
             </View>
           </>

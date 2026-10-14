@@ -18,15 +18,16 @@ purpose, linkage to user, and use for tracking.
 |---|---|---|---|---|
 | **Contact Info** | Email address | App functionality (authentication, account recovery) | **Yes** | **No** |
 | **User Content** | Other user content (display name, handle, avatar URL, vehicle details, private zone locations, report details) | App functionality | **Yes** | **No** |
-| **Identifiers** | User ID (Supabase auth UUID) | App functionality | **Yes** | **No** |
-| **Location** | Precise location | App functionality (live nearby presence, only while active) | **Yes** | **No** |
+| **Identifiers** | User ID (Supabase auth UUID); Device ID (the Apple push-to-talk token, stored only while live with voice on, deleted when the live session ends; voice builds only) | App functionality | **Yes** | **No** |
+| **Location** | Precise location | App functionality (live nearby presence, only while live, including in the background after Go Live) | **Yes** | **No** |
 | **Diagnostics** | _None disclosed unless a crash SDK is added before submission_ | — | — | — |
-| **Audio Data** | _None — voice is live only, never recorded or transmitted to our servers as a payload._ | — | — | — |
+| **Audio Data** | _None — voice is live only. It is relayed in real time by Agora and never recorded or stored, which is not "collection" under Apple's definition (data kept no longer than needed to service the request in real time)._ | — | — | — |
 
 ### Why "Linked to user: Yes" for Location
 
-Location is processed only while the user is actively signed in and has
-tapped Start RoadPing. The current presence row is keyed by `user_id`. We do
+Location is processed only while the user is signed in and live: from Go
+Live until the session ends (Phase 3: also while RoadPing is in the
+background, under When In Use authorization; never Always). The current presence row is keyed by `user_id`. We do
 not store any historical location. Apple still requires "Linked" because the
 processing happens against an identified account.
 

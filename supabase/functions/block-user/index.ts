@@ -8,6 +8,11 @@
  * Idempotent: blocking the same user again returns success without error.
  * Self-block is rejected.
  * The blocked user is NEVER notified.
+ *
+ * Phase 3: the block takes effect for voice at the next token grant or
+ * renewal (private.voice_can_listen), i.e. within 45 s. When the optional
+ * AGORA_CUSTOMER_ID / AGORA_CUSTOMER_SECRET secrets are set, it also asks
+ * Agora to remove either party from the other's open per-press channel now.
  */
 
 import { corsHeaders } from '../_shared/cors.ts';
@@ -15,6 +20,9 @@ import { createAdminClient } from '../_shared/client.ts';
 import { getAuthUser } from '../_shared/auth.ts';
 import { ok, err } from '../_shared/errors.ts';
 import { isUUID } from '../_shared/validate.ts';
+import { kickListeners, type KickTarget } from '../_shared/agoraKick.ts';
+
+declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void } | undefined;
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -67,6 +75,19 @@ Deno.serve(async (req: Request) => {
     if (blockError && blockError.code !== '23505') {
       console.error('blocks insert error:', blockError);
       return err(500, 'Failed to block user');
+    }
+
+    // ── Voice: best-effort immediate removal from open per-press channels ───
+    const appId = Deno.env.get('AGORA_APP_ID');
+    if (appId) {
+      const { data: kicks } = await admin.rpc('voice_block_kicks', {
+        p_a: user.id,
+        p_b: blocked_user_id,
+      });
+      if (Array.isArray(kicks) && kicks.length > 0) {
+        const work = kickListeners(appId, kicks as KickTarget[]).catch(() => 0);
+        if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime) EdgeRuntime.waitUntil(work);
+      }
     }
 
     return ok({ success: true });
